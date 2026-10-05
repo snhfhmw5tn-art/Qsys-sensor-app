@@ -7,14 +7,16 @@
 .sensor-start:disabled { opacity: .5; cursor: default; }
 .sensor-message { padding: .65rem .85rem; color: #a5d9ca; background: #14271f; border: 1px solid #31594b; border-radius: 6px; font-size: .84rem; }
 .sensor-grid { display: grid; gap: .75rem; margin-bottom: 1.5rem; }
-.sensor-card { align-items: flex-start; }
+.sensor-card { align-items: flex-start; color: #e9edf6; }
+.sensor-card>div strong { color: #e9edf6; }
 .sensor-card>div { gap: .28rem; }
 .sensor-card small { color: #91a0b4; font-size: .72rem; }
 .sensor-card .sensor-warning { color: #f5bd66; }
-.sensor-diagnostics { padding: 1.15rem; margin: 1rem 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.sensor-diagnostics { padding: 1.15rem; margin: 1rem 0; color: #e9edf6; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .sensor-section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .sensor-section-heading .eyebrow { margin: 0; }
 .sensor-section-heading h2 { margin: .25rem 0 0; font-size: 1.1rem; }
+.sensor-section-heading h2 { color: #e9edf6; }
 .reading-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem; }
 .reading-grid article,.diagnostic-grid>div { display: grid; gap: .45rem; padding: .8rem; background: #121a27; border: 1px solid #28354a; border-radius: 8px; }
 .reading-grid article>span,.diagnostic-grid span { color: #8f9db2; font-size: .75rem; }

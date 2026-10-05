@@ -51,7 +51,8 @@ export async function start(dotnet, requestedFrequencyHz) {
         callbackPending: false,
         samplesSent: 0,
         droppedSamples: 0,
-        errors: []
+        errors: [],
+        reportedErrors: new Set()
     };
     activeSession = session;
 
@@ -107,16 +108,23 @@ export async function start(dotnet, requestedFrequencyHz) {
         reportError(session, "Orientation", new Error("Orientation permission was denied."));
     }
 
-    startGenericSensor(session, "LinearAccelerationSensor", "accelerometer", (sensor) => {
-        session.latest.acceleration = vector(sensor.x, sensor.y, sensor.z);
-    });
-    startGenericSensor(session, "Accelerometer", "accelerometer", (sensor) => {
-        session.latest.accelerationIncludingGravity = vector(sensor.x, sensor.y, sensor.z);
-    });
-    startGenericSensor(session, "Gyroscope", "gyroscope", (sensor) => {
-        const radiansToDegrees = 180 / Math.PI;
-        session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.y * radiansToDegrees, sensor.z * radiansToDegrees);
-    });
+    // DeviceMotion is the browser's combined motion stream. Starting Generic Sensor
+    // accelerometer and gyroscope instances as well creates duplicate hardware
+    // connections and noisy "Could not connect" errors on many devices.
+    if (!(motionPermission === "Granted" && "DeviceMotionEvent" in window)) {
+        const accelerationSensor = typeof window.LinearAccelerationSensor === "function"
+            ? "LinearAccelerationSensor"
+            : "Accelerometer";
+        startGenericSensor(session, accelerationSensor, "accelerometer", (sensor) => {
+            const reading = vector(sensor.x, sensor.y, sensor.z);
+            if (accelerationSensor === "LinearAccelerationSensor") session.latest.acceleration = reading;
+            else session.latest.accelerationIncludingGravity = reading;
+        });
+        startGenericSensor(session, "Gyroscope", "gyroscope", (sensor) => {
+            const radiansToDegrees = 180 / Math.PI;
+            session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.y * radiansToDegrees, sensor.z * radiansToDegrees);
+        });
+    }
     startGenericSensor(session, "Magnetometer", "magnetometer", (sensor) => {
         session.latest.magneticFieldMicrotesla = vector(sensor.x, sensor.y, sensor.z);
     });
@@ -185,6 +193,9 @@ function hasMeasurement(latest) {
 
 function reportError(session, kind, error) {
     const diagnostic = { kind, message: error?.message ?? String(error), name: error?.name ?? "SensorError" };
+    const key = `${kind}:${diagnostic.name}:${diagnostic.message}`;
+    if (session.reportedErrors.has(key)) return;
+    session.reportedErrors.add(key);
     session.errors.push(diagnostic);
     if (session.errors.length > 50) session.errors.shift();
     session.dotnet.invokeMethodAsync("OnSensorDiagnostic", diagnostic).catch(() => {});

@@ -9,7 +9,7 @@
 
 <section class="sensor-controls">
     <div class="sensor-control-copy">
-        <strong>@(isSampling ? "Sensor sampling is active" : "Sensor sampling is stopped")</strong>
+        <strong>@(SamplingStatus)</strong>
         <span>@(isSecureContext ? "Secure context · browser and device support varies" : "HTTPS or localhost is required to access device sensors")</span>
     </div>
     <label>Sampling rate <select @bind="requestedRateHz" disabled="@isSampling"><option value="1">1 Hz</option><option value="5">5 Hz</option><option value="10">10 Hz</option><option value="20">20 Hz</option><option value="25">25 Hz</option></select></label>
@@ -27,17 +27,17 @@
                 <small>Permission: @capability.Permission</small>
                 @if (!string.IsNullOrWhiteSpace(capability.Diagnostic)) { <small class="sensor-warning">@capability.Diagnostic</small> }
             </div>
-            <span class="pill @(capability.IsSupported ? "" : "neutral")">@(capability.IsSupported ? "Supported" : "Unavailable")</span>
+            <span class="pill @(capability.IsSupported ? "" : "neutral")">@(capability.IsSupported ? "API available" : "Unavailable")</span>
         </article>
     }
     @if (capabilities.Count == 0) { <article class="sensor-card"><div><strong>Checking browser capabilities…</strong><span>Capabilities are checked without requesting permission.</span></div></article> }
 </section>
 
 <section class="sensor-diagnostics">
-    <div class="sensor-section-heading"><div><p class="eyebrow">LIVE STREAM</p><h2>Latest readings</h2></div><span class="pill @(isSampling ? "" : "neutral")">@(isSampling ? "Sampling" : "Idle")</span></div>
+    <div class="sensor-section-heading"><div><p class="eyebrow">LIVE STREAM</p><h2>Latest readings</h2></div><span class="pill @((isSampling && receivedSamples > 0) ? "" : "neutral")">@SamplingBadge</span></div>
     @if (latestReading is null)
     {
-        <p class="small-note">Start sampling to view sensor values. Permissions are requested only after you press the start button.</p>
+        <p class="small-note">@(isSampling ? "Waiting for readings from the device. Browser API availability does not guarantee that this device has a connected sensor." : "Start sampling to view sensor values. Permissions are requested only after you press the start button.")</p>
     }
     else
     {
@@ -94,6 +94,8 @@
     private bool isSampling;
     private string? message;
     private DateTime lastUiUpdateUtc = DateTime.MinValue;
+    private string SamplingStatus => !isSampling ? "Sensor sampling is stopped" : receivedSamples == 0 ? "Waiting for device readings" : "Sensor readings are arriving";
+    private string SamplingBadge => !isSampling ? "Idle" : receivedSamples == 0 ? "Waiting" : "Receiving";
 
     private sealed record SensorDiagnostic(string Kind, string Message);
 
@@ -140,7 +142,7 @@
         {
             using var result = await drawingModule.InvokeAsync<JsonDocument>("start", dotnetReference, requestedRateHz);
             isSampling = true;
-            message = "Sensor permission request completed. Unsupported or denied sensors are listed in diagnostics.";
+            message = "Sensor access was requested. Waiting for device readings; browser API availability does not confirm physical sensor hardware.";
             await RefreshCapabilities();
         }
         catch (JSException exception)
@@ -207,6 +209,7 @@
     {
         var kind = diagnostic.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "Sensor" : "Sensor";
         var text = diagnostic.TryGetProperty("message", out var messageValue) ? messageValue.GetString() ?? "Unknown sensor error." : "Unknown sensor error.";
+        if (sensorErrors.Any(error => error.Kind == kind && error.Message == text)) return;
         sensorErrors.Add(new SensorDiagnostic(kind, text));
         if (sensorErrors.Count > 50) sensorErrors.RemoveAt(0);
         await InvokeAsync(StateHasChanged);

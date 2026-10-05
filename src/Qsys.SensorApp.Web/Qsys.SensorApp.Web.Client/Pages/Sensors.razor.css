@@ -1,0 +1,30 @@
+.sensor-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem 1.15rem; margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.sensor-control-copy { display: grid; gap: .3rem; flex: 1; min-width: 230px; }
+.sensor-control-copy span { color: var(--muted); font-size: .8rem; }
+.sensor-controls label { display: flex; align-items: center; gap: .5rem; color: #b4bfd0; font-size: .8rem; }
+.sensor-controls select { padding: .45rem .65rem; color: #e9edf6; background: #1b2635; border: 1px solid #354258; border-radius: 6px; }
+.sensor-start { padding: .55rem .85rem; color: #11211f; background: #7bd4c0; border: 1px solid #7bd4c0; border-radius: 6px; cursor: pointer; text-decoration: none; }
+.sensor-start:disabled { opacity: .5; cursor: default; }
+.sensor-message { padding: .65rem .85rem; color: #a5d9ca; background: #14271f; border: 1px solid #31594b; border-radius: 6px; font-size: .84rem; }
+.sensor-grid { display: grid; gap: .75rem; margin-bottom: 1.5rem; }
+.sensor-card { align-items: flex-start; }
+.sensor-card>div { gap: .28rem; }
+.sensor-card small { color: #91a0b4; font-size: .72rem; }
+.sensor-card .sensor-warning { color: #f5bd66; }
+.sensor-diagnostics { padding: 1.15rem; margin: 1rem 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.sensor-section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.sensor-section-heading .eyebrow { margin: 0; }
+.sensor-section-heading h2 { margin: .25rem 0 0; font-size: 1.1rem; }
+.reading-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem; }
+.reading-grid article,.diagnostic-grid>div { display: grid; gap: .45rem; padding: .8rem; background: #121a27; border: 1px solid #28354a; border-radius: 8px; }
+.reading-grid article>span,.diagnostic-grid span { color: #8f9db2; font-size: .75rem; }
+.reading-grid article strong { color: #dfe6f0; font-size: .93rem; font-variant-numeric: tabular-nums; }
+.reading-grid article small { color: #9ca8bc; font-size: .72rem; }
+.diagnostic-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .65rem; }
+.diagnostic-grid strong { color: #cbd5e3; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.sensor-error-list { margin: .85rem 0 0; padding: .75rem .75rem .75rem 2rem; color: #f0bd84; background: #2b211a; border: 1px solid #5c4330; border-radius: 6px; font-size: .78rem; }
+.reading-table-wrap { overflow-x: auto; }
+.reading-table { width: 100%; border-collapse: collapse; font-size: .75rem; white-space: nowrap; }
+.reading-table th { padding: .55rem; color: #8f9db2; text-align: left; border-bottom: 1px solid var(--border); }
+.reading-table td { padding: .55rem; color: #cbd5e3; border-bottom: 1px solid #202c3c; font-variant-numeric: tabular-nums; }
+@media(max-width:700px){.reading-grid{grid-template-columns:1fr}.diagnostic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sensor-card{flex-wrap:wrap}}

@@ -1,5 +1,250 @@
 @page "/sensors"
+@using System.Text.Json
+@using Qsys.SensorApp.Core.Sensors
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
 <PageTitle>Sensors | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">DEVICE DIAGNOSTICS</p><h1>Sensors</h1><p class="lede">Browser sensor support varies by device, browser and permission.</p></section>
-<div class="notice-card"><span class="notice-icon">i</span><div><strong>Sensor collection is not active</strong><p>This workspace does not request sensor permissions. Sensor sampling will be configured in a later milestone.</p></div></div>
-<section class="sensor-grid"><article class="sensor-card"><span class="sensor-symbol">⌁</span><div><strong>Motion sensors</strong><span>Accelerometer · gyroscope</span></div><span class="pill neutral">Not sampled</span></article><article class="sensor-card"><span class="sensor-symbol">⌖</span><div><strong>Orientation</strong><span>Device heading and rotation</span></div><span class="pill neutral">Not sampled</span></article><article class="sensor-card"><span class="sensor-symbol">◉</span><div><strong>Environment</strong><span>Barometer · battery · network</span></div><span class="pill neutral">Not sampled</span></article></section>
+<section class="page-heading"><p class="eyebrow">MILESTONE 5 · SENSOR ENGINE</p><h1>Sensors</h1><p class="lede">Live device measurements, access permissions and sampling diagnostics.</p></section>
+
+<section class="sensor-controls">
+    <div class="sensor-control-copy">
+        <strong>@(isSampling ? "Sensor sampling is active" : "Sensor sampling is stopped")</strong>
+        <span>@(isSecureContext ? "Secure context · browser and device support varies" : "HTTPS or localhost is required to access device sensors")</span>
+    </div>
+    <label>Sampling rate <select @bind="requestedRateHz" disabled="@isSampling"><option value="1">1 Hz</option><option value="5">5 Hz</option><option value="10">10 Hz</option><option value="20">20 Hz</option><option value="25">25 Hz</option></select></label>
+    @if (!isSampling) { <button class="primary-link sensor-start" @onclick="StartSampling" disabled="@(drawingModule is null)">Allow sensors and start</button> }
+    else { <button class="quiet-button" @onclick="StopSampling">Stop sampling</button> }
+</section>
+@if (!string.IsNullOrWhiteSpace(message)) { <p class="sensor-message" role="status">@message</p> }
+
+<section class="sensor-grid">
+    @foreach (var capability in capabilities)
+    {
+        <article class="sensor-card">
+            <span class="sensor-symbol">@Icon(capability.Kind)</span>
+            <div><strong>@capability.Kind</strong><span>@Description(capability.Kind)</span>
+                <small>Permission: @capability.Permission</small>
+                @if (!string.IsNullOrWhiteSpace(capability.Diagnostic)) { <small class="sensor-warning">@capability.Diagnostic</small> }
+            </div>
+            <span class="pill @(capability.IsSupported ? "" : "neutral")">@(capability.IsSupported ? "Supported" : "Unavailable")</span>
+        </article>
+    }
+    @if (capabilities.Count == 0) { <article class="sensor-card"><div><strong>Checking browser capabilities…</strong><span>Capabilities are checked without requesting permission.</span></div></article> }
+</section>
+
+<section class="sensor-diagnostics">
+    <div class="sensor-section-heading"><div><p class="eyebrow">LIVE STREAM</p><h2>Latest readings</h2></div><span class="pill @(isSampling ? "" : "neutral")">@(isSampling ? "Sampling" : "Idle")</span></div>
+    @if (latestReading is null)
+    {
+        <p class="small-note">Start sampling to view sensor values. Permissions are requested only after you press the start button.</p>
+    }
+    else
+    {
+        <div class="reading-grid">
+            <article><span>Acceleration · m/s²</span><strong>@Vector(latestReading.Acceleration)</strong><small>Including gravity: @Vector(latestReading.AccelerationIncludingGravity)</small></article>
+            <article><span>Rotation rate · °/s</span><strong>@Vector(latestReading.RotationRateDegreesPerSecond)</strong><small>Heading: @Scalar(latestReading.HeadingDegrees, "°") · @(latestReading.OrientationIsAbsolute ? "absolute" : "relative / unavailable")</small></article>
+            <article><span>Magnetic field · μT</span><strong>@Vector(latestReading.MagneticFieldMicrotesla)</strong><small>Pitch @Scalar(latestReading.PitchDegrees, "°") · Roll @Scalar(latestReading.RollDegrees, "°")</small></article>
+            <article><span>Barometer · kPa</span><strong>@Scalar(latestReading.PressureKilopascals, " kPa")</strong><small>Device timestamp: @latestReading.TimestampUtc.ToLocalTime().ToString("HH:mm:ss.fff")</small></article>
+        </div>
+    }
+</section>
+
+<section class="sensor-diagnostics">
+    <div class="sensor-section-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h2>Sampling health</h2></div></div>
+    <div class="diagnostic-grid">
+        <div><span>Received samples</span><strong>@receivedSamples</strong></div>
+        <div><span>Requested rate</span><strong>@requestedRateHz Hz</strong></div>
+        <div><span>Observed rate</span><strong>@(observedRateHz is null ? "—" : $"{observedRateHz:0.0} Hz")</strong></div>
+        <div><span>Dropped interop samples</span><strong>@droppedSamples</strong></div>
+        <div><span>Sensor errors</span><strong>@sensorErrors.Count</strong></div>
+        <div><span>Last reading</span><strong>@(latestReading is null ? "—" : latestReading.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"))</strong></div>
+    </div>
+    @if (sensorErrors.Count > 0)
+    {
+        <ul class="sensor-error-list">@foreach (var error in sensorErrors.TakeLast(8)) { <li><strong>@error.Kind:</strong> @error.Message</li> }</ul>
+    }
+</section>
+
+<section class="sensor-diagnostics">
+    <div class="sensor-section-heading"><div><p class="eyebrow">RECENT HISTORY</p><h2>Last @recentReadings.Count samples</h2></div><button class="quiet-button" @onclick="ClearHistory" disabled="@(recentReadings.Count == 0)">Clear</button></div>
+    @if (recentReadings.Count == 0) { <p class="small-note">Samples stay in this page's memory and are cleared when the page closes.</p> }
+    else
+    {
+        <div class="reading-table-wrap"><table class="reading-table"><thead><tr><th>Time (UTC)</th><th>Accel X/Y/Z</th><th>Gyro X/Y/Z · °/s</th><th>Heading</th><th>Pressure · kPa</th></tr></thead><tbody>
+            @foreach (var reading in recentReadings.Reverse()) { <tr><td>@reading.TimestampUtc.ToString("HH:mm:ss.fff")</td><td>@Vector(reading.Acceleration)</td><td>@Vector(reading.RotationRateDegreesPerSecond)</td><td>@Scalar(reading.HeadingDegrees, "°")</td><td>@Scalar(reading.PressureKilopascals, "")</td></tr> }
+        </tbody></table></div>
+    }
+</section>
+
+@code {
+    private const int RecentReadingLimit = 300;
+    private IJSObjectReference? drawingModule;
+    private DotNetObjectReference<Sensors>? dotnetReference;
+    private readonly List<SensorCapability> capabilities = [];
+    private readonly List<SensorDiagnostic> sensorErrors = [];
+    private readonly Queue<SensorReading> recentReadings = new();
+    private SensorReading? latestReading;
+    private int requestedRateHz = 10;
+    private int receivedSamples;
+    private int droppedSamples;
+    private double? observedRateHz;
+    private double? previousTimestampMilliseconds;
+    private bool isSecureContext;
+    private bool isSampling;
+    private string? message;
+    private DateTime lastUiUpdateUtc = DateTime.MinValue;
+
+    private sealed record SensorDiagnostic(string Kind, string Message);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js");
+            await RefreshCapabilities();
+        }
+        catch (JSException exception) { message = $"Could not initialize browser sensors: {exception.Message}"; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshCapabilities()
+    {
+        if (drawingModule is null) return;
+        using var result = await drawingModule.InvokeAsync<JsonDocument>("inspect");
+        var root = result.RootElement;
+        isSecureContext = root.GetProperty("secureContext").GetBoolean();
+        capabilities.Clear();
+        foreach (var sensor in root.GetProperty("sensors").EnumerateArray())
+        {
+            if (!Enum.TryParse<SensorKind>(sensor.GetProperty("kind").GetString(), out var kind)) continue;
+            var permission = Enum.TryParse<SensorPermissionState>(sensor.GetProperty("permission").GetString(), out var parsedPermission)
+                ? parsedPermission
+                : SensorPermissionState.Unknown;
+            capabilities.Add(new SensorCapability(
+                kind,
+                sensor.GetProperty("supported").GetBoolean(),
+                permission,
+                sensor.TryGetProperty("diagnostic", out var diagnostic) && diagnostic.ValueKind == JsonValueKind.String ? diagnostic.GetString() : null));
+        }
+    }
+
+    private async Task StartSampling()
+    {
+        if (drawingModule is null) return;
+        sensorErrors.Clear(); receivedSamples = 0; droppedSamples = 0; observedRateHz = null; previousTimestampMilliseconds = null;
+        dotnetReference?.Dispose();
+        dotnetReference = DotNetObjectReference.Create(this);
+        try
+        {
+            using var result = await drawingModule.InvokeAsync<JsonDocument>("start", dotnetReference, requestedRateHz);
+            isSampling = true;
+            message = "Sensor permission request completed. Unsupported or denied sensors are listed in diagnostics.";
+            await RefreshCapabilities();
+        }
+        catch (JSException exception)
+        {
+            isSampling = false;
+            message = exception.Message;
+        }
+    }
+
+    private async Task StopSampling()
+    {
+        if (drawingModule is not null) await drawingModule.InvokeVoidAsync("stop");
+        isSampling = false;
+        message = "Sampling stopped. Recent samples remain available until this page is closed or cleared.";
+    }
+
+    [JSInvokable]
+    public async Task OnSensorReading(JsonElement sample)
+    {
+        try
+        {
+            var timestampMilliseconds = Number(sample, "timestampUnixMilliseconds") ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var timestamp = DateTimeOffset.FromUnixTimeMilliseconds((long)timestampMilliseconds);
+            var reading = new SensorReading(
+                timestamp,
+                Number(sample, "samplingIntervalMilliseconds") ?? 0,
+                Vector(sample, "acceleration"),
+                Vector(sample, "accelerationIncludingGravity"),
+                Vector(sample, "rotationRate"),
+                Vector(sample, "magneticField"),
+                Number(sample, "headingDegrees"),
+                Number(sample, "pitchDegrees"),
+                Number(sample, "rollDegrees"),
+                Boolean(sample, "orientationIsAbsolute"),
+                Number(sample, "pressureKilopascals"));
+
+            if (previousTimestampMilliseconds is { } previous && timestampMilliseconds > previous)
+            {
+                var interval = timestampMilliseconds - previous;
+                var currentRate = 1000 / interval;
+                observedRateHz = observedRateHz is null ? currentRate : (observedRateHz.Value * 0.8) + (currentRate * 0.2);
+            }
+            previousTimestampMilliseconds = timestampMilliseconds;
+            receivedSamples++;
+            droppedSamples = Math.Max(droppedSamples, (int)(Number(sample, "droppedSamples") ?? 0));
+            latestReading = reading;
+            recentReadings.Enqueue(reading);
+            while (recentReadings.Count > RecentReadingLimit) recentReadings.Dequeue();
+            if ((DateTime.UtcNow - lastUiUpdateUtc).TotalMilliseconds >= 75)
+            {
+                lastUiUpdateUtc = DateTime.UtcNow;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (ArgumentException exception)
+        {
+            sensorErrors.Add(new SensorDiagnostic("Data", exception.Message));
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnSensorDiagnostic(JsonElement diagnostic)
+    {
+        var kind = diagnostic.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "Sensor" : "Sensor";
+        var text = diagnostic.TryGetProperty("message", out var messageValue) ? messageValue.GetString() ?? "Unknown sensor error." : "Unknown sensor error.";
+        sensorErrors.Add(new SensorDiagnostic(kind, text));
+        if (sensorErrors.Count > 50) sensorErrors.RemoveAt(0);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static SensorVector3? Vector(JsonElement sample, string prefix)
+    {
+        var x = Number(sample, $"{prefix}X"); var y = Number(sample, $"{prefix}Y"); var z = Number(sample, $"{prefix}Z");
+        return x is null || y is null || z is null ? null : new SensorVector3(x.Value, y.Value, z.Value);
+    }
+
+    private static double? Number(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+
+    private static bool Boolean(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.True;
+    private static string Vector(SensorVector3? vector) => vector is { } value ? $"{value.X:0.00} / {value.Y:0.00} / {value.Z:0.00}" : "—";
+    private static string Scalar(double? value, string suffix) => value is { } number ? $"{number:0.00}{suffix}" : "—";
+    private static string Icon(SensorKind kind) => kind switch { SensorKind.Accelerometer => "⌁", SensorKind.Gyroscope => "⟳", SensorKind.Magnetometer => "⌖", SensorKind.Orientation => "◉", SensorKind.DeviceMotion => "↝", _ => "◌" };
+    private static string Description(SensorKind kind) => kind switch
+    {
+        SensorKind.Accelerometer => "Linear acceleration in m/s²",
+        SensorKind.Gyroscope => "Angular rate in degrees per second",
+        SensorKind.Magnetometer => "Magnetic field in microteslas",
+        SensorKind.Orientation => "Device attitude and compass heading",
+        SensorKind.DeviceMotion => "Combined accelerometer and rotation event",
+        SensorKind.Barometer => "Ambient pressure in kilopascals",
+        _ => "Device sensor"
+    };
+
+    private void ClearHistory() { recentReadings.Clear(); receivedSamples = 0; latestReading = null; previousTimestampMilliseconds = null; observedRateHz = null; }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (drawingModule is not null)
+        {
+            try { await drawingModule.InvokeVoidAsync("stop"); } catch (JSDisconnectedException) { }
+            await drawingModule.DisposeAsync();
+        }
+        dotnetReference?.Dispose();
+    }
+}

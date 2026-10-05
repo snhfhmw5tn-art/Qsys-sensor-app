@@ -1,6 +1,8 @@
 @page "/navigation"
 @using System.Text.Json
+@using System.Text.Json.Serialization
 @using Microsoft.JSInterop
+@using Qsys.SensorApp.Core.DigitalTwin
 @using Qsys.SensorApp.Core.Geometry
 @using Qsys.SensorApp.Core.Maps
 @using Qsys.SensorApp.Core.Navigation
@@ -8,8 +10,8 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<PageTitle>Navigation | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">MILESTONE 7 · VEHICLE DETECTION</p><h1>Navigation</h1><p class="lede">Dead reckoning from device motion, calibrated warehouse map matching and live activity classification.</p></section>
+<PageTitle>Digital Twin | Qsys Sensor App</PageTitle>
+<section class="page-heading"><p class="eyebrow">MILESTONE 10 · WAREHOUSE DIGITAL TWIN</p><h1>Digital Twin</h1><p class="lede">Live warehouse position, movement history, replay, visit heatmap and activity intelligence.</p></section>
 
 <section class="sensor-controls">
     <div class="sensor-control-copy"><strong>@(isRunning ? "Navigation session active" : "Navigation session stopped")</strong><span>@mapMessage</span></div>
@@ -22,14 +24,28 @@
 </section>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
 
-<section class="about-panel navigation-stats">
-    <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@state.PositionMeters.X.ToString("0.00") / @state.PositionMeters.Y.ToString("0.00") / @state.PositionMeters.Z.ToString("0.00") m</p></div>
-    <div><span class="eyebrow">HEADING</span><p>@(state.HeadingDegrees?.ToString("0.0") ?? "—")°</p></div>
-    <div><span class="eyebrow">SPEED · STEPS</span><p>@state.SpeedMetersPerSecond.ToString("0.00") m/s · @state.StepCount</p></div>
-    <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@state.Activity.Type · @((state.Activity.Confidence * 100).ToString("0"))%</p></div>
-    <div><span class="eyebrow">CONFIDENCE · UNCERTAINTY</span><p>@((state.Confidence * 100).ToString("0"))% · ±@state.PositionUncertaintyMeters.ToString("0.00") m</p></div>
+<section class="twin-controls">
+    <label>View <select @bind="viewMode" @bind:after="OnViewModeChanged"><option value="Live">Live position</option><option value="Heatmap">Heatmap</option><option value="Replay">History replay</option></select></label>
+    @if (viewMode == TwinViewMode.Replay)
+    {
+        <label class="replay-range">History <input type="range" min="0" max="@Math.Max(0, twinHistory.Count - 1)" value="@replayIndex" @oninput="ChangeReplayIndex" disabled="@(twinHistory.Count == 0)" /></label>
+        <span>@ReplayTimestamp</span>
+        <button class="quiet-button" @onclick="ToggleReplay" disabled="@(twinHistory.Count < 2)">@(isReplayPlaying ? "Pause replay" : "Play replay")</button>
+    }
+    @if (viewMode == TwinViewMode.Heatmap) { <span>@heatmapCells.Count hot cells · 2 m grid</span> }
+    <button class="quiet-button" @onclick="ClearHistory" disabled="@(isRunning || twinHistory.Count == 0)">Clear local history</button>
 </section>
-<p class="small-note">Activity labels are sensor-based heuristics. Truck is a low-confidence vibration candidate, not a confirmed vehicle identity.</p>
+
+<section class="about-panel navigation-stats">
+    <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
+    <div><span class="eyebrow">HEADING</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p></div>
+    <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
+    <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@(ReplaySample is { } replay ? replay.Activity : state.Activity.Type) · @ReplayActivityConfidence.ToString("0")%</p></div>
+    <div><span class="eyebrow">CONFIDENCE · UNCERTAINTY</span><p>@((ReplaySample?.Confidence ?? state.Confidence).ToString("P0")) · ±@((ReplaySample?.PositionUncertaintyMeters ?? state.PositionUncertaintyMeters).ToString("0.00")) m</p></div>
+    <div><span class="eyebrow">HISTORY · SESSIONS</span><p>@twinHistory.Count.ToString("N0") samples · @twinHistory.Select(sample => sample.SessionId).Distinct().Count() sessions</p></div>
+</section>
+<section class="about-panel twin-insights"><div><span class="eyebrow">MOVEMENT INTELLIGENCE · RULE-BASED</span><p>@TopActivityInsight</p></div><div><span class="eyebrow">MEAN ACTIVITY CONFIDENCE</span><p>@MeanActivityConfidence</p></div><div><span class="eyebrow">HEATMAP TOTAL</span><p>@twinHistory.Count visits recorded locally</p></div></section>
+<p class="small-note">Activity labels use the explainable sensor heuristic from Milestone 7; this view does not call an external or trained AI model. Truck remains a low-confidence vibration candidate.</p>
 
 <section class="navigation-empty navigation-map">
     <svg viewBox="@MapViewBox()" role="img" aria-label="Local navigation position and map graph">
@@ -41,15 +57,22 @@
                 <line x1="@N(from.X)" y1="@N(-from.Y)" x2="@N(to.X)" y2="@N(-to.Y)" />
             }
         </g>
-        <path class="nav-track" d="@TrackPath()" />
-        <circle class="nav-position" cx="@N(state.PositionMeters.X)" cy="@N(-state.PositionMeters.Y)" r="0.22" />
-        @if (state.HeadingDegrees is { } heading)
+        @if (viewMode == TwinViewMode.Heatmap)
+        {
+            @foreach (var cell in heatmapCells)
+            {
+                <circle class="heat-cell" cx="@N(cell.CenterX)" cy="@N(-cell.CenterY)" r="0.75" fill-opacity="@N(0.18 + cell.Intensity * 0.65)"><title>@cell.SampleCount visits</title></circle>
+            }
+        }
+        @if (viewMode != TwinViewMode.Heatmap) { <path class="nav-track" d="@DisplayedTrackPath()" /> }
+        <circle class="nav-position" cx="@N(DisplayPosition.X)" cy="@N(-DisplayPosition.Y)" r="0.22" />
+        @if (DisplayHeading is { } heading)
         {
             var angle = heading * Math.PI / 180;
-            <line class="nav-heading" x1="@N(state.PositionMeters.X)" y1="@N(-state.PositionMeters.Y)" x2="@N(state.PositionMeters.X + Math.Sin(angle))" y2="@N(-state.PositionMeters.Y - Math.Cos(angle))" />
+            <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
         }
     </svg>
-    <p>Position uses a local metre-based frame. Heading 0° points north; east is +X.</p>
+    <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Heading 0° points north; east is +X.")</p>
 </section>
 
 @code {
@@ -60,6 +83,16 @@
     private NavigationGraph graph = new([], []);
     private NavigationState state = new(DateTimeOffset.UtcNow, Vector3.Zero, null, 0, 0, 0, 0, false, null, ActivityEstimate.Unknown);
     private readonly List<Vector2> track = [];
+    private readonly List<DigitalTwinSample> twinHistory = [];
+    private readonly List<HeatmapCell> heatmapCells = [];
+    private static readonly JsonSerializerOptions HistoryJsonOptions = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
+    private TwinViewMode viewMode = TwinViewMode.Live;
+    private Guid currentSessionId;
+    private DateTimeOffset? lastHistoryCapture;
+    private int replayIndex;
+    private CancellationTokenSource? replayCancellation;
+    private bool isReplayPlaying;
+    private bool isDisposed;
     private bool isRunning;
     private double initialX;
     private double initialY;
@@ -69,11 +102,41 @@
     private string? message;
     private DateTime lastUiUpdate = DateTime.MinValue;
 
+    private enum TwinViewMode { Live, Heatmap, Replay }
+    private const int MaximumHistorySamples = 5000;
+    private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
+    private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
+    private double? DisplayHeading => ReplaySample is { } sample ? sample.HeadingDegrees : state.HeadingDegrees;
+    private double ReplayActivityConfidence => (ReplaySample?.ActivityConfidence ?? state.Activity.Confidence) * 100;
+    private string ReplayTimestamp => ReplaySample is { } sample ? sample.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "No history";
+    private string TopActivityInsight
+    {
+        get
+        {
+            if (twinHistory.Count == 0) return "No captured movement samples yet.";
+            var group = twinHistory.GroupBy(sample => sample.Activity).OrderByDescending(item => item.Count()).First();
+            return $"Most observed label: {group.Key} ({group.Count()} of {twinHistory.Count} samples).";
+        }
+    }
+    private string MeanActivityConfidence => twinHistory.Count == 0 ? "—" : $"{twinHistory.Average(sample => sample.ActivityConfidence):P0}";
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
         sensorModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js");
         drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+        var storedHistory = await drawingModule.InvokeAsync<JsonElement>("loadDigitalTwinHistory");
+        if (storedHistory.ValueKind == JsonValueKind.Array)
+        {
+            try
+            {
+                var loaded = JsonSerializer.Deserialize<List<DigitalTwinSample>>(storedHistory.GetRawText(), HistoryJsonOptions) ?? [];
+                twinHistory.AddRange(loaded.Where(IsValidSample).TakeLast(MaximumHistorySamples));
+                heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));
+                replayIndex = Math.Max(0, twinHistory.Count - 1);
+            }
+            catch (JsonException) { message = "Saved digital-twin history could not be read; new samples can still be recorded."; }
+        }
         var saved = await drawingModule.InvokeAsync<JsonElement>("loadMap");
         var features = ReadFeatures(saved);
         var sourceGraph = NavigationGraphGenerator.Generate(features);
@@ -111,6 +174,9 @@
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
             state = engine.State;
+            viewMode = TwinViewMode.Live;
+            currentSessionId = Guid.NewGuid();
+            lastHistoryCapture = null;
             track.Clear(); track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
             dotnetReference?.Dispose(); dotnetReference = DotNetObjectReference.Create(this);
             using var result = await sensorModule.InvokeAsync<JsonDocument>("start", dotnetReference, 25);
@@ -142,6 +208,8 @@
             state = engine.Process(reading);
             track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
             if (track.Count > 600) track.RemoveAt(0);
+            if (lastHistoryCapture is null || (state.TimestampUtc - lastHistoryCapture.Value).TotalSeconds >= 1)
+                await CaptureHistorySample();
             if ((DateTime.UtcNow - lastUiUpdate).TotalMilliseconds >= 100)
             {
                 lastUiUpdate = DateTime.UtcNow;
@@ -161,9 +229,107 @@
     }
 
     private string TrackPath() => track.Count < 2 ? string.Empty : string.Join(" ", track.Select((point, index) => $"{(index == 0 ? "M" : "L")}{N(point.X)},{N(-point.Y)}"));
+    private string DisplayedTrackPath()
+    {
+        if (viewMode != TwinViewMode.Replay || ReplaySample is not { } replay) return TrackPath();
+        var points = twinHistory.Take(replayIndex + 1).Where(sample => sample.SessionId == replay.SessionId).Select(sample => new Vector2(sample.X, sample.Y)).ToArray();
+        return points.Length < 2 ? string.Empty : string.Join(" ", points.Select((point, index) => $"{(index == 0 ? "M" : "L")}{N(point.X)},{N(-point.Y)}"));
+    }
+
+    private async Task CaptureHistorySample()
+    {
+        lastHistoryCapture = state.TimestampUtc;
+        var sample = new DigitalTwinSample(currentSessionId, state.TimestampUtc, state.PositionMeters.X, state.PositionMeters.Y, state.PositionMeters.Z,
+            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence);
+        twinHistory.Add(sample);
+        if (twinHistory.Count > MaximumHistorySamples) twinHistory.RemoveAt(0);
+        heatmapCells.Clear(); heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));
+        if (drawingModule is not null)
+        {
+            var saved = await drawingModule.InvokeAsync<bool>("appendDigitalTwinSample", new
+            {
+                sessionId = sample.SessionId, timestampUtc = sample.TimestampUtc, sample.X, sample.Y, sample.Z, sample.HeadingDegrees,
+                sample.SpeedMetersPerSecond, sample.StepCount, sample.Confidence, sample.PositionUncertaintyMeters,
+                activity = sample.Activity.ToString(), sample.ActivityConfidence
+            });
+            if (!saved) message = "Twin history is visible in this session but could not be saved to browser storage.";
+        }
+        if (viewMode == TwinViewMode.Replay) replayIndex = Math.Max(0, twinHistory.Count - 1);
+    }
+
+    private static bool IsValidSample(DigitalTwinSample sample) => sample is not null && sample.SessionId != Guid.Empty && double.IsFinite(sample.X) && double.IsFinite(sample.Y) && double.IsFinite(sample.Z) &&
+        double.IsFinite(sample.SpeedMetersPerSecond) && sample.SpeedMetersPerSecond >= 0 && sample.StepCount >= 0 &&
+        double.IsFinite(sample.Confidence) && sample.Confidence is >= 0 and <= 1 && double.IsFinite(sample.PositionUncertaintyMeters) && sample.PositionUncertaintyMeters >= 0 &&
+        double.IsFinite(sample.ActivityConfidence) && sample.ActivityConfidence is >= 0 and <= 1 && (sample.HeadingDegrees is null || double.IsFinite(sample.HeadingDegrees.Value)) && Enum.IsDefined(sample.Activity);
+
+    private async Task OnViewModeChanged()
+    {
+        if (viewMode == TwinViewMode.Replay) replayIndex = Math.Max(0, twinHistory.Count - 1);
+        else StopReplay();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ChangeReplayIndex(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var index)) replayIndex = Math.Clamp(index, 0, Math.Max(0, twinHistory.Count - 1));
+    }
+
+    private Task ToggleReplay()
+    {
+        if (isReplayPlaying) { StopReplay(); return Task.CompletedTask; }
+        if (twinHistory.Count < 2) return Task.CompletedTask;
+        viewMode = TwinViewMode.Replay;
+        if (replayIndex >= twinHistory.Count - 1) replayIndex = 0;
+        replayCancellation = new CancellationTokenSource();
+        isReplayPlaying = true;
+        _ = RunReplay(replayCancellation.Token);
+        return Task.CompletedTask;
+    }
+
+    private async Task RunReplay(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(500, cancellationToken);
+                replayIndex = replayIndex >= twinHistory.Count - 1 ? 0 : replayIndex + 1;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            isReplayPlaying = false;
+            if (!isDisposed)
+            {
+                try { await InvokeAsync(StateHasChanged); }
+                catch (InvalidOperationException) { }
+            }
+        }
+    }
+
+    private void StopReplay()
+    {
+        replayCancellation?.Cancel();
+        replayCancellation?.Dispose();
+        replayCancellation = null;
+        isReplayPlaying = false;
+    }
+
+    private async Task ClearHistory()
+    {
+        StopReplay();
+        if (drawingModule is not null) await drawingModule.InvokeVoidAsync("clearDigitalTwinHistory");
+        twinHistory.Clear(); heatmapCells.Clear(); replayIndex = 0;
+        message = "Local digital-twin history and heatmap cleared.";
+    }
+
     private string MapViewBox()
     {
-        var points = graph.Nodes.Select(node => node.Position).Concat(track).Append(new Vector2(state.PositionMeters.X, state.PositionMeters.Y)).ToArray();
+        var points = graph.Nodes.Select(node => node.Position).Concat(track).Concat(twinHistory.Select(sample => new Vector2(sample.X, sample.Y)))
+            .Append(new Vector2(DisplayPosition.X, DisplayPosition.Y)).Concat(heatmapCells.Select(cell => new Vector2(cell.CenterX, cell.CenterY))).ToArray();
         var minX = points.Min(point => point.X); var maxX = points.Max(point => point.X);
         var minY = points.Min(point => -point.Y); var maxY = points.Max(point => -point.Y);
         var padding = Math.Max(2, Math.Max(maxX - minX, maxY - minY) * 0.12);
@@ -181,6 +347,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        isDisposed = true;
+        StopReplay();
         if (sensorModule is not null) { try { await sensorModule.InvokeVoidAsync("stop"); } catch (JSDisconnectedException) { } await sensorModule.DisposeAsync(); }
         if (drawingModule is not null) await drawingModule.DisposeAsync();
         dotnetReference?.Dispose();

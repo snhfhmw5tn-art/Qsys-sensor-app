@@ -16,7 +16,7 @@
 - Pressure altitude is relative to the first valid pressure sample in the session; it is not a surveyed floor elevation.
 - Stride length defaults to 0.72 m and should be calibrated for a user and activity. The threshold-based detector and estimated confidence are initial engineering estimates, not a validated safety or survey system.
 - Map matching uses the saved graph on level "0" and a 2 m tolerance. Feature levels are kept by the drawing editor, but the page does not yet offer level selection or vertical route transitions.
-- Position trace and navigation state are session-only. The map is stored only in the current browser's local storage; there is no server synchronization, user identity, route planner, replay, or multi-device positioning.
+- At Milestone 6, the position trace and navigation state were session-only. Milestone 10 adds a bounded local browser history and replay; there is still no server synchronization, user identity, route planner, or multi-device positioning.
 
 ## Verification
 

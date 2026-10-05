@@ -1,4 +1,6 @@
 const mapStorageKey = "qsys.sensorapp.map.v1";
+const digitalTwinHistoryKey = "qsys.sensorapp.digital-twin.v1";
+const maximumDigitalTwinSamples = 5000;
 
 export function toMapPoint(svg, clientX, clientY) {
     const matrix = svg.getScreenCTM();
@@ -37,4 +39,33 @@ export function downloadText(fileName, content, mimeType) {
     anchor.download = fileName;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function loadDigitalTwinHistory() {
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(digitalTwinHistoryKey) ?? "[]");
+        return Array.isArray(parsed) ? parsed.slice(-maximumDigitalTwinSamples) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function appendDigitalTwinSample(sample) {
+    try {
+        const history = loadDigitalTwinHistory().slice(-maximumDigitalTwinSamples + 1);
+        history.push(sample);
+        window.localStorage.setItem(digitalTwinHistoryKey, JSON.stringify(history));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export function clearDigitalTwinHistory() {
+    try {
+        window.localStorage.removeItem(digitalTwinHistoryKey);
+        return true;
+    } catch {
+        return false;
+    }
 }

@@ -7,3 +7,10 @@
 .nav-position { fill: #dc4d45; stroke: white; stroke-width: .06; }
 .nav-heading { stroke: #dc4d45; stroke-width: .06; stroke-linecap: round; }
 .navigation-map p { margin: .75rem .25rem .25rem; }
+.twin-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; padding: 1rem; margin-block: 1rem; background: #fff; border: 1px solid #e1e7ea; border-radius: 12px; }
+.twin-controls label { display: flex; flex-direction: column; gap: .3rem; font-size: .82rem; color: #586b75; }
+.twin-controls .replay-range { min-width: min(320px, 45vw); }
+.replay-range input { width: 100%; }
+.twin-insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-block: 1rem; }
+.twin-insights p { margin: .45rem 0 0; }
+.heat-cell { fill: #e35445; stroke: #f9c05f; stroke-width: .12; }

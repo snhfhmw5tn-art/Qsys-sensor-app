@@ -2,8 +2,12 @@
 @using System.Globalization
 @using System.Text
 @using System.Xml
+@using Qsys.SensorApp.Core.Geometry
+@using Qsys.SensorApp.Core.Maps
 @using Microsoft.AspNetCore.Components.Forms
-@implements IDisposable
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 <PageTitle>Drawing | Qsys Sensor App</PageTitle>
 <section class="page-heading"><p class="eyebrow">MILESTONE 3 · DRAWING ENGINE</p><h1>Drawing</h1><p class="lede">Import a warehouse plan, calibrate its scale and prepare a layered map for editing.</p></section>
 
@@ -19,6 +23,16 @@
         <button class="quiet-button" @onclick="ResetView">Reset</button>
         <button class="quiet-button" @onclick="() => ChangeView(viewport.Rotate(90))">Rotate 90°</button>
     </span>
+</div>
+<div class="editor-toolbar">
+    <label>Draw feature <select value="@selectedTool" @onchange="ChangeTool"><option value="Select">Select / pan</option><option value="Aisle">Aisle</option><option value="TruckAisle">Truck aisle</option><option value="Stair">Stair</option><option value="Elevator">Elevator</option><option value="Ramp">Ramp</option><option value="Barcode">Barcode</option><option value="ForbiddenArea">Forbidden area</option></select></label>
+    @if (drawingKind is not null)
+    {
+        <span>@drawingKind: @workingPoints.Count point(s)</span>
+        @if (drawingKind != WarehouseFeatureKind.Barcode) { <button class="quiet-button" @onclick="FinishFeature" disabled="!CanFinishFeature">Finish feature</button> }
+        <button class="quiet-button" @onclick="CancelFeature">Cancel</button>
+    }
+    <span class="graph-status">Auto graph: @graph.Nodes.Count nodes · @graph.Edges.Count edges</span>
 </div>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="drawing-message" role="status">@message</p> }
 <div class="map-layout">
@@ -39,6 +53,33 @@
                 <text x="46" y="55">RECEIVING</text><text x="658" y="415">DOCK 04</text>
             </svg>
         }
+        <svg class="map-feature-overlay" @ref="featureOverlay" viewBox="0 0 800 460" preserveAspectRatio="none" role="presentation" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)" @onpointerdown="HandleMapPointerDown" @onpointerdown:stopPropagation="IsMapEditMode">
+            @foreach (var node in graph.Nodes)
+            {
+                <circle class="graph-node" cx="@N(node.Position.X)" cy="@N(node.Position.Y)" r="3.5" />
+            }
+            @foreach (var feature in features)
+            {
+                <g class="map-feature" @key="feature.Id" @onclick:stopPropagation="true">
+                    @if (feature.Kind == WarehouseFeatureKind.Barcode)
+                    {
+                        <circle cx="@N(feature.Points[0].X)" cy="@N(feature.Points[0].Y)" r="7" fill="#f5bd66" stroke="#fff1d5" stroke-width="2" />
+                        @((MarkupString)SvgText(feature.Points[0].X + 9, feature.Points[0].Y - 8, feature.Name))
+                    }
+                    else if (feature.Kind == WarehouseFeatureKind.ForbiddenArea)
+                    {
+                        <polygon points="@FeaturePoints(feature.Points)" fill="#db536a55" stroke="#db536a" stroke-width="3" stroke-dasharray="7 4" />
+                        @((MarkupString)SvgText(N(feature.Points[0].X), N(feature.Points[0].Y), feature.Name))
+                    }
+                    else
+                    {
+                        <polyline points="@FeaturePoints(feature.Points)" fill="none" stroke="@FeatureColor(feature.Kind)" stroke-width="@(feature.Kind == WarehouseFeatureKind.TruckAisle ? 8 : 5)" stroke-linecap="round" stroke-linejoin="round" />
+                        @((MarkupString)SvgText(feature.Points[0].X, feature.Points[0].Y - 8, feature.Name))
+                    }
+                </g>
+            }
+            @if (workingPoints.Count > 0) { <polyline points="@FeaturePoints(workingPoints)" fill="none" stroke="#f5bd66" stroke-width="3" stroke-dasharray="5 4" /> }
+        </svg>
         @if (isPanning) { <span class="pan-hint">Drag to pan · scroll to zoom</span> }
     </section>
     <aside class="layer-panel">
@@ -54,6 +95,14 @@
         <hr />
         <h2>Snap</h2><label><input type="checkbox" @bind="snapEnabled" /> Snap to grid</label>
         <label>Grid size <input type="number" min="0.01" step="any" @bind="gridSize" disabled="@(!snapEnabled)" /></label>
+        <hr />
+        <h2>Map features (@features.Count)</h2>
+        @foreach (var feature in features)
+        {
+            <div class="feature-row"><span>@feature.Kind · @feature.Name</span><button class="quiet-button" title="Delete feature" @onclick="() => DeleteFeature(feature.Id)">×</button></div>
+        }
+        @if (features.Count == 0) { <p class="small-note">Choose a feature type above, then click the map. Finish multi-point shapes when done.</p> }
+        @if (graph.Edges.Count > 0) { <p class="small-note">Generated from walkable lines. Forbidden areas are excluded.</p> }
         <p class="small-note">@if(fileName is null) { <span>Illustrative preview · import a drawing to begin.</span> }</p>
     </aside>
 </div>
@@ -61,7 +110,7 @@
 @code {
     private const long MaxImportBytes = 20 * 1024 * 1024;
     private DrawingViewport viewport = new();
-    private readonly DrawingHistory<EditorState> history = new(new EditorState(new(), [], null, "", null, null, null, null));
+    private readonly DrawingHistory<EditorState> history = new(new EditorState(new(), [], [], null, "", null, null, null, null));
     private List<DrawingLayer> layers = [new("Racks"), new("Route")];
     private string? fileName;
     private string importedFormat = "";
@@ -78,6 +127,15 @@
     private MapCalibration? calibration;
     private bool calibrationMode;
     private readonly List<(double X, double Y)> calibrationPoints = [];
+    private List<WarehouseFeature> features = [];
+    private NavigationGraph graph = new([], []);
+    private readonly List<Vector2> workingPoints = [];
+    private string selectedTool = "Select";
+    private WarehouseFeatureKind? drawingKind;
+    private ElementReference featureOverlay;
+    private IJSObjectReference? drawingModule;
+    private bool IsMapEditMode => calibrationMode || drawingKind is not null;
+    private bool CanFinishFeature => drawingKind == WarehouseFeatureKind.ForbiddenArea ? workingPoints.Count >= 3 : workingPoints.Count >= 2;
     private sealed record DrawingLayer(string Name, bool IsVisible = true, bool IsLocked = false);
     private sealed record DrawingViewport(double Zoom = 1, double PanX = 0, double PanY = 0, double RotationDegrees = 0)
     {
@@ -98,7 +156,12 @@
         public bool Undo() { if (!CanUndo) return false; current--; return true; }
         public bool Redo() { if (!CanRedo) return false; current++; return true; }
     }
-    private record EditorState(DrawingViewport Viewport, List<DrawingLayer> Layers, string? FileName, string Format, MapCalibration? Calibration, string? PreviewUrl, string? PreviewMarkup, string? DxfContent);
+    private record EditorState(DrawingViewport Viewport, List<DrawingLayer> Layers, List<WarehouseFeature> Features, string? FileName, string Format, MapCalibration? Calibration, string? PreviewUrl, string? PreviewMarkup, string? DxfContent);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+    }
 
     private async Task ImportFile(InputFileChangeEventArgs args)
     {
@@ -126,6 +189,8 @@
             fileName = file.Name;
             importedFormat = format;
             layers = [new DrawingLayer(format == "DXF" ? "DXF drawing" : "Imported drawing")];
+            features = [];
+            graph = NavigationGraphGenerator.Generate(features);
             viewport = new DrawingViewport(); calibration = null; message = format == "DXF" ? "DXF imported. Common LINE, CIRCLE and LWPOLYLINE entities are rendered; other entities are skipped." : $"{format} drawing imported.";
             SaveState();
         }
@@ -182,8 +247,23 @@
     private void ResetView() { viewport=new DrawingViewport(); SaveState(); }
     private void StartPan(PointerEventArgs args)
     {
-        if (calibrationMode) { SelectCalibrationPoint(args.OffsetX, args.OffsetY); return; }
+        if (IsMapEditMode) return;
         isPanning=true; panStartView=viewport; lastPointer=(args.ClientX,args.ClientY);
+    }
+    private async Task HandleMapPointerDown(PointerEventArgs args)
+    {
+        if (!IsMapEditMode || drawingModule is null) return;
+        var point = await drawingModule.InvokeAsync<MapPoint>("toMapPoint", featureOverlay, args.ClientX, args.ClientY);
+        if (calibrationMode) { SelectCalibrationPoint(point.X, point.Y); return; }
+        if (drawingKind is null) return;
+        var snapped = Snap(point.X, point.Y);
+        if (drawingKind == WarehouseFeatureKind.Barcode)
+        {
+            AddFeature(WarehouseFeatureKind.Barcode, [snapped]);
+            return;
+        }
+        if (workingPoints.Count == 0 || workingPoints[^1] != snapped) workingPoints.Add(snapped);
+        message = $"{drawingKind}: {workingPoints.Count} point(s) added.";
     }
     private void EndPan(PointerEventArgs _) { if (!isPanning) return; isPanning=false; if (panStartView != viewport) SaveState(); }
     private void MovePan(PointerEventArgs args) { if (!isPanning) return; var dx=args.ClientX-lastPointer.X; var dy=args.ClientY-lastPointer.Y; viewport=viewport.Translate(dx,dy); lastPointer=(args.ClientX,args.ClientY); }
@@ -196,13 +276,52 @@
         calibrationPoints.Add((x,y));
         if (calibrationPoints.Count < 2) { message="First calibration point selected. Select the second point."; return; }
         var dx=calibrationPoints[1].X-calibrationPoints[0].X; var dy=calibrationPoints[1].Y-calibrationPoints[0].Y;
-        var drawingDistance=Math.Sqrt(dx*dx+dy*dy)/viewport.Zoom;
+        var drawingDistance=Math.Sqrt(dx*dx+dy*dy);
         if (!double.IsFinite(calibrationRealDistance) || calibrationRealDistance <= 0 || drawingDistance <= 0) { message="Enter a positive known distance and select two different points."; calibrationPoints.Clear(); return; }
         calibration=new MapCalibration(calibrationRealDistance/drawingDistance); calibrationMode=false; calibrationPoints.Clear(); message="Map scale calibrated."; SaveState();
     }
+    private void ChangeTool(ChangeEventArgs args)
+    {
+        selectedTool = args.Value?.ToString() ?? "Select";
+        drawingKind = Enum.TryParse<WarehouseFeatureKind>(selectedTool, out var parsed) ? parsed : null;
+        workingPoints.Clear();
+        calibrationMode = false;
+        message = drawingKind is null ? "Select mode: drag to pan the map." : $"Click the map to draw a {drawingKind}.";
+    }
+    private Vector2 Snap(double x, double y)
+    {
+        if (!snapEnabled || !double.IsFinite(gridSize) || gridSize <= 0) return new Vector2(x, y);
+        return new Vector2(Math.Round(x / gridSize) * gridSize, Math.Round(y / gridSize) * gridSize);
+    }
+    private void FinishFeature()
+    {
+        if (drawingKind is null || !CanFinishFeature) return;
+        AddFeature(drawingKind.Value, workingPoints.ToArray());
+        workingPoints.Clear();
+    }
+    private void AddFeature(WarehouseFeatureKind kind, IReadOnlyList<Vector2> points)
+    {
+        var name = $"{kind} {features.Count(feature => feature.Kind == kind) + 1}";
+        try
+        {
+            features = [..features, new WarehouseFeature(Guid.NewGuid(), kind, name, points)];
+            graph = NavigationGraphGenerator.Generate(features);
+            message = $"{name} added. Navigation graph regenerated.";
+            SaveState();
+        }
+        catch (ArgumentException exception) { message = exception.Message; }
+    }
+    private void CancelFeature() { workingPoints.Clear(); drawingKind = null; selectedTool = "Select"; message = "Drawing canceled."; }
+    private void DeleteFeature(Guid id) { features = features.Where(feature => feature.Id != id).ToList(); graph = NavigationGraphGenerator.Generate(features); SaveState(); }
+    private static string FeaturePoints(IReadOnlyList<Vector2> points) => string.Join(" ", points.Select(point => $"{N(point.X)},{N(point.Y)}"));
+    private static string N(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string SvgText(double x, double y, string value) => $"<text x='{N(x)}' y='{N(y)}'>{System.Net.WebUtility.HtmlEncode(value)}</text>";
+    private static string SvgText(string x, string y, string value) => $"<text x='{x}' y='{y}'>{System.Net.WebUtility.HtmlEncode(value)}</text>";
+    private static string FeatureColor(WarehouseFeatureKind kind) => kind switch { WarehouseFeatureKind.TruckAisle => "#f5bd66", WarehouseFeatureKind.Stair => "#bf91e8", WarehouseFeatureKind.Elevator => "#5fb4e5", WarehouseFeatureKind.Ramp => "#89c477", _ => "#7bd4c0" };
     private void Undo() { if (!history.Undo()) return; Restore(history.Current); }
     private void Redo() { if (!history.Redo()) return; Restore(history.Current); }
-    private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),fileName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
-    private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); fileName=state.FileName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
-    public void Dispose() { }
+    private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),features.ToList(),fileName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
+    private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); features=state.Features.ToList(); graph=NavigationGraphGenerator.Generate(features); fileName=state.FileName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
+    private sealed record MapPoint(double X, double Y);
+    public async ValueTask DisposeAsync() { if (drawingModule is not null) await drawingModule.DisposeAsync(); }
 }

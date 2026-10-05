@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Qsys.SensorApp.Shared\Qsys.SensorApp.Shared.csproj" />
+    <ProjectReference Include="..\..\Qsys.SensorApp.Core\Qsys.SensorApp.Core.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
   </ItemGroup>
 

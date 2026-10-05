@@ -12,3 +12,11 @@
 .layer-panel input[type=number] { width: 100%; padding: .35rem; color: #e5eaf2; background: #1b2635; border: 1px solid #354258; border-radius: 5px; }
 .layer-panel .quiet-button { margin-top: .4rem; }
 .toolbar-actions button:disabled { opacity: .45; cursor: default; }
+.map-feature-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: all; }
+.map-feature-overlay text { fill: #edf2fa; font: 12px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: #101722; stroke-width: 3px; stroke-linejoin: round; }
+.editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; padding: .65rem .85rem; color: #bac5d6; background: #141e2c; border: 1px solid var(--border); border-top: 0; font-size: .82rem; }
+.editor-toolbar label { display: flex; align-items: center; gap: .45rem; }
+.editor-toolbar select { padding: .35rem .55rem; color: #e9edf6; background: #1b2635; border: 1px solid #354258; border-radius: 5px; }
+.graph-status { margin-left: auto; color: #91d9c7; }
+.feature-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .35rem 0; color: #b4bfd0; font-size: .78rem; }
+.map-feature-overlay .graph-node { fill: #74bdf0; stroke: #13283b; stroke-width: 1.5; }

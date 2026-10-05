@@ -46,8 +46,10 @@ export async function start(dotnet, requestedFrequencyHz) {
         sampleIntervalMilliseconds: 1000 / frequencyHz,
         latest: {},
         sensors: [],
+        fallbackSensors: [],
         listeners: [],
         timer: null,
+        motionFallbackTimer: null,
         callbackPending: false,
         samplesSent: 0,
         droppedSamples: 0,
@@ -88,6 +90,13 @@ export async function start(dotnet, requestedFrequencyHz) {
             if (gravity) session.latest.accelerationIncludingGravity = vector(gravity.x, gravity.y, gravity.z);
             if (rotation) session.latest.rotationRateDegreesPerSecond = vector(rotation.alpha, rotation.beta, rotation.gamma);
             if (Number.isFinite(event.interval) && event.interval > 0) session.latest.sourceInterval = event.interval;
+            if (hasMotionMeasurement(session.latest)) {
+                if (session.motionFallbackTimer !== null) {
+                    window.clearTimeout(session.motionFallbackTimer);
+                    session.motionFallbackTimer = null;
+                }
+                stopGenericSensors(session, session.fallbackSensors);
+            }
         });
     } else if (motionPermission === "Denied") {
         reportError(session, "DeviceMotion", new Error("Motion permission was denied."));
@@ -108,22 +117,18 @@ export async function start(dotnet, requestedFrequencyHz) {
         reportError(session, "Orientation", new Error("Orientation permission was denied."));
     }
 
-    // DeviceMotion is the browser's combined motion stream. Starting Generic Sensor
-    // accelerometer and gyroscope instances as well creates duplicate hardware
-    // connections and noisy "Could not connect" errors on many devices.
-    if (!(motionPermission === "Granted" && "DeviceMotionEvent" in window)) {
-        const accelerationSensor = typeof window.LinearAccelerationSensor === "function"
-            ? "LinearAccelerationSensor"
-            : "Accelerometer";
-        startGenericSensor(session, accelerationSensor, "accelerometer", (sensor) => {
-            const reading = vector(sensor.x, sensor.y, sensor.z);
-            if (accelerationSensor === "LinearAccelerationSensor") session.latest.acceleration = reading;
-            else session.latest.accelerationIncludingGravity = reading;
-        });
-        startGenericSensor(session, "Gyroscope", "gyroscope", (sensor) => {
-            const radiansToDegrees = 180 / Math.PI;
-            session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.y * radiansToDegrees, sensor.z * radiansToDegrees);
-        });
+    // Prefer the combined DeviceMotion stream, but don't treat the existence of
+    // its API as proof that it produces data (desktop Edge exposes it too).
+    // If no motion readings arrive shortly after start, try one Generic Sensor
+    // accelerometer and one gyroscope as a fallback.
+    if (motionPermission === "Granted" && "DeviceMotionEvent" in window) {
+        session.motionFallbackTimer = window.setTimeout(() => {
+            session.motionFallbackTimer = null;
+            if (activeSession !== session || hasMotionMeasurement(session.latest)) return;
+            startGenericMotionSensors(session, session.fallbackSensors);
+        }, 1500);
+    } else {
+        startGenericMotionSensors(session);
     }
     startGenericSensor(session, "Magnetometer", "magnetometer", (sensor) => {
         session.latest.magneticFieldMicrotesla = vector(sensor.x, sensor.y, sensor.z);
@@ -136,7 +141,22 @@ export async function start(dotnet, requestedFrequencyHz) {
     return inspect();
 }
 
-function startGenericSensor(session, constructorName, permissionName, onReading) {
+function startGenericMotionSensors(session, collection = null) {
+    const accelerationSensor = typeof window.LinearAccelerationSensor === "function"
+        ? "LinearAccelerationSensor"
+        : "Accelerometer";
+    startGenericSensor(session, accelerationSensor, "accelerometer", (sensor) => {
+        const reading = vector(sensor.x, sensor.y, sensor.z);
+        if (accelerationSensor === "LinearAccelerationSensor") session.latest.acceleration = reading;
+        else session.latest.accelerationIncludingGravity = reading;
+    }, collection);
+    startGenericSensor(session, "Gyroscope", "gyroscope", (sensor) => {
+        const radiansToDegrees = 180 / Math.PI;
+        session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.y * radiansToDegrees, sensor.z * radiansToDegrees);
+    }, collection);
+}
+
+function startGenericSensor(session, constructorName, permissionName, onReading, collection = null) {
     const SensorConstructor = window[constructorName];
     if (typeof SensorConstructor !== "function") return;
     try {
@@ -145,9 +165,24 @@ function startGenericSensor(session, constructorName, permissionName, onReading)
         sensor.addEventListener("error", (event) => reportError(session, permissionName, event.error ?? new Error("Sensor could not be read.")));
         sensor.start();
         session.sensors.push(sensor);
+        collection?.push(sensor);
     } catch (error) {
         reportError(session, permissionName, error);
     }
+}
+
+function stopGenericSensors(session, sensors) {
+    for (const sensor of sensors) {
+        try { sensor.stop(); } catch { /* Sensor may already be inactive. */ }
+        const index = session.sensors.indexOf(sensor);
+        if (index >= 0) session.sensors.splice(index, 1);
+    }
+    sensors.length = 0;
+}
+
+function hasMotionMeasurement(latest) {
+    return [latest.acceleration, latest.accelerationIncludingGravity, latest.rotationRateDegreesPerSecond]
+        .some(value => value && [value.x, value.y, value.z].some(Number.isFinite));
 }
 
 function emit(session) {
@@ -206,6 +241,7 @@ export async function stop() {
     if (!session) return;
     activeSession = undefined;
     if (session.timer !== null) window.clearInterval(session.timer);
+    if (session.motionFallbackTimer !== null) window.clearTimeout(session.motionFallbackTimer);
     for (const [name, handler] of session.listeners) window.removeEventListener(name, handler);
     for (const sensor of session.sensors) {
         try { sensor.stop(); } catch { /* Sensor may already be inactive. */ }

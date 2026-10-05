@@ -1,6 +1,7 @@
 @page "/drawing"
 @using System.Globalization
 @using System.Text
+@using System.Text.Json
 @using System.Xml
 @using Qsys.SensorApp.Core.Geometry
 @using Qsys.SensorApp.Core.Maps
@@ -160,7 +161,47 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender) drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+        if (!firstRender) return;
+        drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+        await LoadPersistedMap();
+    }
+
+    private async Task LoadPersistedMap()
+    {
+        if (drawingModule is null) return;
+        var stored = await drawingModule.InvokeAsync<JsonElement>("loadMap");
+        features = [];
+        if (stored.TryGetProperty("features", out var storedFeatures) && storedFeatures.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in storedFeatures.EnumerateArray())
+            {
+                if (!Enum.TryParse<WarehouseFeatureKind>(item.GetProperty("kind").GetString(), out var kind)) continue;
+                var points = item.GetProperty("points").EnumerateArray()
+                    .Select(point => new Vector2(point.GetProperty("x").GetDouble(), point.GetProperty("y").GetDouble())).ToArray();
+                features.Add(new WarehouseFeature(Guid.Parse(item.GetProperty("id").GetString()!), kind,
+                    item.GetProperty("name").GetString() ?? kind.ToString(), points,
+                    item.TryGetProperty("level", out var level) ? level.GetString() ?? "0" : "0"));
+            }
+        }
+        graph = NavigationGraphGenerator.Generate(features);
+        if (stored.TryGetProperty("metersPerDrawingUnit", out var scale) && scale.ValueKind == JsonValueKind.Number && scale.TryGetDouble(out var metersPerUnit) && metersPerUnit > 0)
+            calibration = new MapCalibration(metersPerUnit);
+        if (features.Count > 0) SaveState();
+    }
+
+    private async Task PersistMap()
+    {
+        if (drawingModule is null) return;
+        var data = features.Select(feature => new
+        {
+            id = feature.Id,
+            kind = feature.Kind.ToString(),
+            name = feature.Name,
+            level = feature.Level,
+            points = feature.Points.Select(point => new { x = point.X, y = point.Y })
+        }).ToArray();
+        var saved = await drawingModule.InvokeAsync<bool>("saveMap", data, calibration?.MetersPerDrawingUnit);
+        if (!saved) message = "The map could not be saved in this browser's local storage.";
     }
 
     private async Task ImportFile(InputFileChangeEventArgs args)
@@ -192,6 +233,7 @@
             features = [];
             graph = NavigationGraphGenerator.Generate(features);
             viewport = new DrawingViewport(); calibration = null; message = format == "DXF" ? "DXF imported. Common LINE, CIRCLE and LWPOLYLINE entities are rendered; other entities are skipped." : $"{format} drawing imported.";
+            await PersistMap();
             SaveState();
         }
         catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException or ArgumentException)
@@ -254,12 +296,12 @@
     {
         if (!IsMapEditMode || drawingModule is null) return;
         var point = await drawingModule.InvokeAsync<MapPoint>("toMapPoint", featureOverlay, args.ClientX, args.ClientY);
-        if (calibrationMode) { SelectCalibrationPoint(point.X, point.Y); return; }
+        if (calibrationMode) { await SelectCalibrationPoint(point.X, point.Y); return; }
         if (drawingKind is null) return;
         var snapped = Snap(point.X, point.Y);
         if (drawingKind == WarehouseFeatureKind.Barcode)
         {
-            AddFeature(WarehouseFeatureKind.Barcode, [snapped]);
+            await AddFeature(WarehouseFeatureKind.Barcode, [snapped]);
             return;
         }
         if (workingPoints.Count == 0 || workingPoints[^1] != snapped) workingPoints.Add(snapped);
@@ -270,7 +312,7 @@
     private void ZoomWheel(WheelEventArgs args) => ChangeView(viewport.Scale(args.DeltaY < 0 ? 1.1 : 1/1.1));
     private void SetLayer(string name, bool visible) { layers=layers.Select(layer=>layer.Name==name ? layer with { IsVisible=visible } : layer).ToList(); if (importedFormat=="DXF" && dxfContent is not null) previewMarkup=DxfToSvg(dxfContent); SaveState(); }
     private void BeginCalibration() { calibrationPoints.Clear(); calibrationMode=!calibrationMode; message=calibrationMode ? "Select two points with a known distance between them." : "Calibration canceled."; }
-    private void SelectCalibrationPoint(double x, double y)
+    private async Task SelectCalibrationPoint(double x, double y)
     {
         if (snapEnabled && double.IsFinite(gridSize) && gridSize > 0) { x=Math.Round(x/gridSize)*gridSize; y=Math.Round(y/gridSize)*gridSize; }
         calibrationPoints.Add((x,y));
@@ -278,7 +320,7 @@
         var dx=calibrationPoints[1].X-calibrationPoints[0].X; var dy=calibrationPoints[1].Y-calibrationPoints[0].Y;
         var drawingDistance=Math.Sqrt(dx*dx+dy*dy);
         if (!double.IsFinite(calibrationRealDistance) || calibrationRealDistance <= 0 || drawingDistance <= 0) { message="Enter a positive known distance and select two different points."; calibrationPoints.Clear(); return; }
-        calibration=new MapCalibration(calibrationRealDistance/drawingDistance); calibrationMode=false; calibrationPoints.Clear(); message="Map scale calibrated."; SaveState();
+        calibration=new MapCalibration(calibrationRealDistance/drawingDistance); calibrationMode=false; calibrationPoints.Clear(); message="Map scale calibrated."; await PersistMap(); SaveState();
     }
     private void ChangeTool(ChangeEventArgs args)
     {
@@ -293,13 +335,13 @@
         if (!snapEnabled || !double.IsFinite(gridSize) || gridSize <= 0) return new Vector2(x, y);
         return new Vector2(Math.Round(x / gridSize) * gridSize, Math.Round(y / gridSize) * gridSize);
     }
-    private void FinishFeature()
+    private async Task FinishFeature()
     {
         if (drawingKind is null || !CanFinishFeature) return;
-        AddFeature(drawingKind.Value, workingPoints.ToArray());
+        await AddFeature(drawingKind.Value, workingPoints.ToArray());
         workingPoints.Clear();
     }
-    private void AddFeature(WarehouseFeatureKind kind, IReadOnlyList<Vector2> points)
+    private async Task AddFeature(WarehouseFeatureKind kind, IReadOnlyList<Vector2> points)
     {
         var name = $"{kind} {features.Count(feature => feature.Kind == kind) + 1}";
         try
@@ -307,19 +349,19 @@
             features = [..features, new WarehouseFeature(Guid.NewGuid(), kind, name, points)];
             graph = NavigationGraphGenerator.Generate(features);
             message = $"{name} added. Navigation graph regenerated.";
-            SaveState();
+            await PersistMap(); SaveState();
         }
         catch (ArgumentException exception) { message = exception.Message; }
     }
     private void CancelFeature() { workingPoints.Clear(); drawingKind = null; selectedTool = "Select"; message = "Drawing canceled."; }
-    private void DeleteFeature(Guid id) { features = features.Where(feature => feature.Id != id).ToList(); graph = NavigationGraphGenerator.Generate(features); SaveState(); }
+    private async Task DeleteFeature(Guid id) { features = features.Where(feature => feature.Id != id).ToList(); graph = NavigationGraphGenerator.Generate(features); await PersistMap(); SaveState(); }
     private static string FeaturePoints(IReadOnlyList<Vector2> points) => string.Join(" ", points.Select(point => $"{N(point.X)},{N(point.Y)}"));
     private static string N(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
     private static string SvgText(double x, double y, string value) => $"<text x='{N(x)}' y='{N(y)}'>{System.Net.WebUtility.HtmlEncode(value)}</text>";
     private static string SvgText(string x, string y, string value) => $"<text x='{x}' y='{y}'>{System.Net.WebUtility.HtmlEncode(value)}</text>";
     private static string FeatureColor(WarehouseFeatureKind kind) => kind switch { WarehouseFeatureKind.TruckAisle => "#f5bd66", WarehouseFeatureKind.Stair => "#bf91e8", WarehouseFeatureKind.Elevator => "#5fb4e5", WarehouseFeatureKind.Ramp => "#89c477", _ => "#7bd4c0" };
-    private void Undo() { if (!history.Undo()) return; Restore(history.Current); }
-    private void Redo() { if (!history.Redo()) return; Restore(history.Current); }
+    private async Task Undo() { if (!history.Undo()) return; Restore(history.Current); await PersistMap(); }
+    private async Task Redo() { if (!history.Redo()) return; Restore(history.Current); await PersistMap(); }
     private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),features.ToList(),fileName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
     private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); features=state.Features.ToList(); graph=NavigationGraphGenerator.Generate(features); fileName=state.FileName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
     private sealed record MapPoint(double X, double Y);

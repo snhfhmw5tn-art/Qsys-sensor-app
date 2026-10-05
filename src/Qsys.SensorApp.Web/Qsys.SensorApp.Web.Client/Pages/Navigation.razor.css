@@ -1,0 +1,9 @@
+.navigation-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-block: 1.25rem; }
+.navigation-stats p { margin: .45rem 0 0; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.navigation-map { padding: 1rem; overflow: hidden; }
+.navigation-map svg { width: 100%; height: min(58vh, 560px); background: #f7f9fa; border: 1px solid #d9e1e5; border-radius: 12px; }
+.nav-graph line { stroke: #a6b6bf; stroke-width: .08; }
+.nav-track { fill: none; stroke: #2982b8; stroke-width: .08; stroke-linecap: round; stroke-linejoin: round; }
+.nav-position { fill: #dc4d45; stroke: white; stroke-width: .06; }
+.nav-heading { stroke: #dc4d45; stroke-width: .06; stroke-linecap: round; }
+.navigation-map p { margin: .75rem .25rem .25rem; }

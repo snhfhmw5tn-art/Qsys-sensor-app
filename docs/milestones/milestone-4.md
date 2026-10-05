@@ -14,5 +14,6 @@
 - The browser editor currently assigns all new features to level `0`; editing floor/level is not yet exposed in the UI.
 - Stair, elevator and ramp paths are represented as 2D polylines. Cross-floor elevator transitions need explicit level endpoints and are not generated yet.
 - Existing feature vertices cannot be dragged. Features can be deleted and redrawn.
-- The graph is an in-memory planar topology generator; it does not persist the map or provide route search yet.
+- Features and calibration are persisted in browser local storage and shared with the Navigation page on that browser. This is local-only and does not synchronize through the API or between devices.
+- The graph is an in-memory planar topology generator and does not provide route search yet.
 - DXF import continues to expose one imported drawing layer. CAD layers are not mapped to editable feature layers.

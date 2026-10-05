@@ -1,4 +1,186 @@
 @page "/navigation"
+@using System.Text.Json
+@using Microsoft.JSInterop
+@using Qsys.SensorApp.Core.Geometry
+@using Qsys.SensorApp.Core.Maps
+@using Qsys.SensorApp.Core.Navigation
+@using Qsys.SensorApp.Core.Sensors
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
 <PageTitle>Navigation | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">POSITIONING</p><h1>Navigation</h1><p class="lede">Live positioning will appear here when a map and sensor stream are connected.</p></section>
-<section class="navigation-empty"><div class="compass-mark">N<span>＋</span></div><h2>No active session</h2><p>Import a warehouse map and connect a supported device to begin a navigation session.</p><a class="primary-link" href="drawing">View drawing workspace <span>→</span></a></section>
+<section class="page-heading"><p class="eyebrow">MILESTONE 6 · NAVIGATION</p><h1>Navigation</h1><p class="lede">Dead reckoning from device motion, with calibrated warehouse map matching.</p></section>
+
+<section class="sensor-controls">
+    <div class="sensor-control-copy"><strong>@(isRunning ? "Navigation session active" : "Navigation session stopped")</strong><span>@mapMessage</span></div>
+    <label>Start X (m) <input type="number" step="0.1" @bind="initialX" disabled="@isRunning" /></label>
+    <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
+    <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
+    <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
+    @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
+    else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
+</section>
+@if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
+
+<section class="about-panel navigation-stats">
+    <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@state.PositionMeters.X.ToString("0.00") / @state.PositionMeters.Y.ToString("0.00") / @state.PositionMeters.Z.ToString("0.00") m</p></div>
+    <div><span class="eyebrow">HEADING</span><p>@(state.HeadingDegrees?.ToString("0.0") ?? "—")°</p></div>
+    <div><span class="eyebrow">SPEED · STEPS</span><p>@state.SpeedMetersPerSecond.ToString("0.00") m/s · @state.StepCount</p></div>
+    <div><span class="eyebrow">CONFIDENCE · UNCERTAINTY</span><p>@((state.Confidence * 100).ToString("0"))% · ±@state.PositionUncertaintyMeters.ToString("0.00") m</p></div>
+</section>
+
+<section class="navigation-empty navigation-map">
+    <svg viewBox="@MapViewBox()" role="img" aria-label="Local navigation position and map graph">
+        <g class="nav-graph">
+            @foreach (var edge in graph.Edges)
+            {
+                var from = graph.Nodes.First(node => node.Id == edge.FromNodeId).Position;
+                var to = graph.Nodes.First(node => node.Id == edge.ToNodeId).Position;
+                <line x1="@N(from.X)" y1="@N(-from.Y)" x2="@N(to.X)" y2="@N(-to.Y)" />
+            }
+        </g>
+        <path class="nav-track" d="@TrackPath()" />
+        <circle class="nav-position" cx="@N(state.PositionMeters.X)" cy="@N(-state.PositionMeters.Y)" r="0.22" />
+        @if (state.HeadingDegrees is { } heading)
+        {
+            var angle = heading * Math.PI / 180;
+            <line class="nav-heading" x1="@N(state.PositionMeters.X)" y1="@N(-state.PositionMeters.Y)" x2="@N(state.PositionMeters.X + Math.Sin(angle))" y2="@N(-state.PositionMeters.Y - Math.Cos(angle))" />
+        }
+    </svg>
+    <p>Position uses a local metre-based frame. Heading 0° points north; east is +X.</p>
+</section>
+
+@code {
+    private IJSObjectReference? sensorModule;
+    private IJSObjectReference? drawingModule;
+    private DotNetObjectReference<Navigation>? dotnetReference;
+    private DeadReckoningEngine? engine;
+    private NavigationGraph graph = new([], []);
+    private NavigationState state = new(DateTimeOffset.UtcNow, Vector3.Zero, null, 0, 0, 0, 0, false, null);
+    private readonly List<Vector2> track = [];
+    private bool isRunning;
+    private double initialX;
+    private double initialY;
+    private double initialHeading;
+    private double stepLength = 0.72;
+    private string mapMessage = "Loading saved map…";
+    private string? message;
+    private DateTime lastUiUpdate = DateTime.MinValue;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        sensorModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js");
+        drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+        var saved = await drawingModule.InvokeAsync<JsonElement>("loadMap");
+        var features = ReadFeatures(saved);
+        var sourceGraph = NavigationGraphGenerator.Generate(features);
+        var scale = saved.TryGetProperty("metersPerDrawingUnit", out var scaleValue) && scaleValue.TryGetDouble(out var parsedScale) && double.IsFinite(parsedScale) && parsedScale > 0 ? parsedScale : 0;
+        if (scale > 0 && sourceGraph.Edges.Count > 0)
+        {
+            graph = new NavigationGraph(sourceGraph.Nodes.Select(node => node with { Position = new Vector2(node.Position.X * scale, -node.Position.Y * scale) }),
+                sourceGraph.Edges.Select(edge => edge with { Length = edge.Length * scale }));
+            mapMessage = $"Calibrated map loaded · {graph.Edges.Count} graph segments · local storage";
+        }
+        else mapMessage = features.Count == 0 ? "No map features saved. Dead reckoning works without map matching; draw and calibrate a map first." : "Map features loaded, but scale calibration is needed to enable map matching.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static List<WarehouseFeature> ReadFeatures(JsonElement saved)
+    {
+        var features = new List<WarehouseFeature>();
+        if (!saved.TryGetProperty("features", out var items) || items.ValueKind != JsonValueKind.Array) return features;
+        foreach (var item in items.EnumerateArray())
+        {
+            if (!item.TryGetProperty("kind", out var kindValue) || !Enum.TryParse<WarehouseFeatureKind>(kindValue.GetString(), out var kind)) continue;
+            var points = item.GetProperty("points").EnumerateArray().Select(point => new Vector2(point.GetProperty("x").GetDouble(), point.GetProperty("y").GetDouble())).ToArray();
+            var id = item.TryGetProperty("id", out var idValue) && Guid.TryParse(idValue.GetString(), out var parsedId) ? parsedId : Guid.NewGuid();
+            features.Add(new WarehouseFeature(id, kind, item.TryGetProperty("name", out var name) ? name.GetString() ?? kind.ToString() : kind.ToString(), points,
+                item.TryGetProperty("level", out var level) ? level.GetString() ?? "0" : "0"));
+        }
+        return features;
+    }
+
+    private async Task StartNavigation()
+    {
+        if (sensorModule is null) return;
+        message = null;
+        try
+        {
+            engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
+            state = engine.State;
+            track.Clear(); track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+            dotnetReference?.Dispose(); dotnetReference = DotNetObjectReference.Create(this);
+            using var result = await sensorModule.InvokeAsync<JsonDocument>("start", dotnetReference, 25);
+            isRunning = true;
+            message = "Sensor session requested at up to 25 Hz. Availability depends on browser, permissions and device hardware.";
+        }
+        catch (Exception exception) when (exception is JSException or ArgumentException)
+        {
+            isRunning = false; message = exception.Message;
+        }
+    }
+
+    private async Task StopNavigation()
+    {
+        if (sensorModule is not null) await sensorModule.InvokeVoidAsync("stop");
+        isRunning = false; message = "Navigation stopped. The final estimate remains visible until this page is closed.";
+    }
+
+    [JSInvokable]
+    public async Task OnSensorReading(JsonElement sample)
+    {
+        if (engine is null) return;
+        try
+        {
+            var millis = Number(sample, "timestampUnixMilliseconds") ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var reading = new SensorReading(DateTimeOffset.FromUnixTimeMilliseconds((long)millis), Number(sample, "samplingIntervalMilliseconds") ?? 0,
+                Vector(sample, "acceleration"), Vector(sample, "accelerationIncludingGravity"), Vector(sample, "rotationRate"), Vector(sample, "magneticField"),
+                Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
+            state = engine.Process(reading);
+            track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+            if (track.Count > 600) track.RemoveAt(0);
+            if ((DateTime.UtcNow - lastUiUpdate).TotalMilliseconds >= 100)
+            {
+                lastUiUpdate = DateTime.UtcNow;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (ArgumentException exception) { message = exception.Message; await InvokeAsync(StateHasChanged); }
+    }
+
+    [JSInvokable]
+    public async Task OnSensorDiagnostic(JsonElement diagnostic)
+    {
+        var kind = diagnostic.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "Sensor" : "Sensor";
+        var detail = diagnostic.TryGetProperty("message", out var messageValue) ? messageValue.GetString() ?? "Unknown sensor error." : "Unknown sensor error.";
+        message = $"{kind}: {detail}";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string TrackPath() => track.Count < 2 ? string.Empty : string.Join(" ", track.Select((point, index) => $"{(index == 0 ? "M" : "L")}{N(point.X)},{N(-point.Y)}"));
+    private string MapViewBox()
+    {
+        var points = graph.Nodes.Select(node => node.Position).Concat(track).Append(new Vector2(state.PositionMeters.X, state.PositionMeters.Y)).ToArray();
+        var minX = points.Min(point => point.X); var maxX = points.Max(point => point.X);
+        var minY = points.Min(point => -point.Y); var maxY = points.Max(point => -point.Y);
+        var padding = Math.Max(2, Math.Max(maxX - minX, maxY - minY) * 0.12);
+        var width = Math.Max(4, maxX - minX + 2 * padding); var height = Math.Max(4, maxY - minY + 2 * padding);
+        return $"{N((minX + maxX - width) / 2)} {N((minY + maxY - height) / 2)} {N(width)} {N(height)}";
+    }
+    private static string N(double value) => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+    private static double? Number(JsonElement sample, string key) => sample.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+    private static bool Boolean(JsonElement sample, string key) => sample.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.True;
+    private static SensorVector3? Vector(JsonElement sample, string prefix)
+    {
+        var x = Number(sample, $"{prefix}X"); var y = Number(sample, $"{prefix}Y"); var z = Number(sample, $"{prefix}Z");
+        return x is null || y is null || z is null ? null : new SensorVector3(x.Value, y.Value, z.Value);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (sensorModule is not null) { try { await sensorModule.InvokeVoidAsync("stop"); } catch (JSDisconnectedException) { } await sensorModule.DisposeAsync(); }
+        if (drawingModule is not null) await drawingModule.DisposeAsync();
+        dotnetReference?.Dispose();
+    }
+}

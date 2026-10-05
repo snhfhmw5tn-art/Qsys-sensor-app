@@ -25,6 +25,8 @@ dotnet run --project src/Qsys.SensorApp.Web/Qsys.SensorApp.Web
 
 The API exposes `/health` and `/api/health`. The web app is served by the ASP.NET Core host and loads its interactive UI from the WebAssembly client project.
 
+To publish the web host to local IIS, use the `LocalIIS` profile. See [the IIS publishing guide](docs/publish-local-iis.md) for prerequisites, commands, and one-time IIS setup.
+
 ## Architecture
 
 ```text

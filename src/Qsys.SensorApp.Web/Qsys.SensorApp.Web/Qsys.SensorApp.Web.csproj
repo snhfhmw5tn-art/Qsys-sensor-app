@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Qsys.SensorApp.Web.Client\Qsys.SensorApp.Web.Client.csproj" />
+    <ProjectReference Include="..\Qsys.SensorApp.Web.Client\Qsys.SensorApp.Web.Client.csproj" GlobalPropertiesToRemove="PublishProfile" />
     <ProjectReference Include="..\..\Qsys.SensorApp.Application\Qsys.SensorApp.Application.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
   </ItemGroup>

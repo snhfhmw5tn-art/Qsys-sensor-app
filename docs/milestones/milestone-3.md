@@ -17,6 +17,6 @@
 - DWG is not imported. No commercial DWG SDK license was available for this work; the UI asks the user to export as DXF. The DXF parser has the entity limitations listed above.
 - DXF source layer names are not yet exposed as independently toggleable layers.
 - Calibration uses points selected on the displayed image and records meters per displayed drawing unit; it does not yet read units or scale metadata from CAD files.
-- The page-local importer has no API persistence. Imported content lives in the browser session.
+- Source drawing files are still held only for the browser session. Semantic warehouse features and calibration persist locally and can be exchanged with the versioned `warehouse-map.json` format; no source drawing binary or API-backed storage is included.
 
 Milestone 3 should remain marked in progress until the CAD/raster gaps and persistence are addressed.

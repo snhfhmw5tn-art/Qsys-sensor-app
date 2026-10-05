@@ -14,17 +14,27 @@ export function toMapPoint(svg, clientX, clientY) {
 export function loadMap() {
     try {
         const serialized = window.localStorage.getItem(mapStorageKey);
-        return serialized ? JSON.parse(serialized) : { features: [], metersPerDrawingUnit: null };
+        return serialized ? JSON.parse(serialized) : { name: "Warehouse map", features: [], metersPerDrawingUnit: null };
     } catch {
-        return { features: [], metersPerDrawingUnit: null };
+        return { name: "Warehouse map", features: [], metersPerDrawingUnit: null };
     }
 }
 
-export function saveMap(features, metersPerDrawingUnit) {
+export function saveMap(features, metersPerDrawingUnit, name = "Warehouse map") {
     try {
-        window.localStorage.setItem(mapStorageKey, JSON.stringify({ features, metersPerDrawingUnit }));
+        window.localStorage.setItem(mapStorageKey, JSON.stringify({ name, features, metersPerDrawingUnit }));
         return true;
     } catch {
         return false;
     }
+}
+
+export function downloadText(fileName, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

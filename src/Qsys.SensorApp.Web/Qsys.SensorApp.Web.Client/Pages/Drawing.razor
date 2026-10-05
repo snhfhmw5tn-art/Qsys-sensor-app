@@ -10,12 +10,14 @@
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 <PageTitle>Drawing | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">MILESTONE 3 · DRAWING ENGINE</p><h1>Drawing</h1><p class="lede">Import a warehouse plan, calibrate its scale and prepare a layered map for editing.</p></section>
+<section class="page-heading"><p class="eyebrow">MILESTONE 9 · WAREHOUSE DESIGNER</p><h1>Warehouse Designer</h1><p class="lede">Import a plan, calibrate real-world scale, draw semantic features and export a portable warehouse map.</p></section>
 
 <div class="drawing-toolbar">
-    <span class="toolbar-title">@(fileName ?? "Untitled warehouse") <span class="muted">/ @(fileName is null ? "No drawing imported" : importedFormat)</span></span>
+        <span class="toolbar-title">@warehouseName <span class="muted">/ @(fileName is null ? (importedFormat == "WAREHOUSE MAP" ? "Warehouse map JSON" : "No drawing imported") : importedFormat)</span></span>
     <span class="toolbar-actions">
         <label class="quiet-button import-button">Import drawing<InputFile OnChange="ImportFile" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.svg,.tif,.tiff,.dxf,.dwg" /></label>
+        <label class="quiet-button import-button">Import warehouse-map.json<InputFile OnChange="ImportMapFile" accept=".json,application/json" /></label>
+        <button class="quiet-button" @onclick="ExportMap" disabled="@(features.Count == 0 || calibration is null || drawingModule is null)">Export warehouse-map.json</button>
         <button class="quiet-button" @onclick="Undo" disabled="!history.CanUndo" aria-label="Undo">↶ Undo</button>
         <button class="quiet-button" @onclick="Redo" disabled="!history.CanRedo" aria-label="Redo">↷ Redo</button>
         <button class="quiet-button" @onclick="() => ChangeView(viewport.Scale(1.15))" aria-label="Zoom in">+</button>
@@ -26,6 +28,7 @@
     </span>
 </div>
 <div class="editor-toolbar">
+    <label>Warehouse name <input @bind="warehouseName" @bind:event="onchange" @bind:after="PersistMap" /></label>
     <label>Draw feature <select value="@selectedTool" @onchange="ChangeTool"><option value="Select">Select / pan</option><option value="Aisle">Aisle</option><option value="TruckAisle">Truck aisle</option><option value="Stair">Stair</option><option value="Elevator">Elevator</option><option value="Ramp">Ramp</option><option value="Barcode">Barcode</option><option value="ForbiddenArea">Forbidden area</option></select></label>
     @if (drawingKind is not null)
     {
@@ -40,7 +43,7 @@
     <section class="map-canvas" aria-label="Warehouse drawing" @onpointerdown="StartPan" @onpointerup="EndPan" @onpointerleave="EndPan" @onpointermove="MovePan" @onwheel="ZoomWheel" @onwheel:preventDefault="true">
         @if (previewUrl is not null || previewMarkup is not null)
         {
-            @if (importedFormat == "SVG" || importedFormat == "DXF") { if (layers.Any(layer => layer.IsVisible)) { <div class="drawing-image" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)">@((MarkupString)(previewMarkup ?? string.Empty))</div> } else { <div class="unsupported-preview">All drawing layers are hidden.</div> } }
+            @if (importedFormat is "SVG" or "DXF" or "WAREHOUSE MAP") { if (layers.Any(layer => layer.IsVisible)) { <div class="drawing-image" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)">@((MarkupString)(previewMarkup ?? string.Empty))</div> } else { <div class="unsupported-preview">All drawing layers are hidden.</div> } }
             else if (importedFormat == "TIFF") { <div class="unsupported-preview"><strong>TIFF recognized</strong><span>This browser cannot preview TIFF. Convert it to PNG for an in-canvas preview.</span></div> }
             else if (layers.Any(layer => layer.IsVisible)) { <img class="drawing-image" src="@previewUrl" alt="Imported warehouse drawing" draggable="false" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)" /> }
             else { <div class="unsupported-preview">All drawing layers are hidden.</div> }
@@ -111,9 +114,10 @@
 @code {
     private const long MaxImportBytes = 20 * 1024 * 1024;
     private DrawingViewport viewport = new();
-    private readonly DrawingHistory<EditorState> history = new(new EditorState(new(), [], [], null, "", null, null, null, null));
+    private readonly DrawingHistory<EditorState> history = new(new EditorState(new(), [], [], null, "Warehouse map", "", null, null, null, null));
     private List<DrawingLayer> layers = [new("Racks"), new("Route")];
     private string? fileName;
+    private string warehouseName = "Warehouse map";
     private string importedFormat = "";
     private string? previewUrl;
     private string? previewMarkup;
@@ -157,7 +161,7 @@
         public bool Undo() { if (!CanUndo) return false; current--; return true; }
         public bool Redo() { if (!CanRedo) return false; current++; return true; }
     }
-    private record EditorState(DrawingViewport Viewport, List<DrawingLayer> Layers, List<WarehouseFeature> Features, string? FileName, string Format, MapCalibration? Calibration, string? PreviewUrl, string? PreviewMarkup, string? DxfContent);
+    private record EditorState(DrawingViewport Viewport, List<DrawingLayer> Layers, List<WarehouseFeature> Features, string? FileName, string WarehouseName, string Format, MapCalibration? Calibration, string? PreviewUrl, string? PreviewMarkup, string? DxfContent);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -170,6 +174,7 @@
     {
         if (drawingModule is null) return;
         var stored = await drawingModule.InvokeAsync<JsonElement>("loadMap");
+        if (stored.TryGetProperty("name", out var storedName) && storedName.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(storedName.GetString())) warehouseName = storedName.GetString()!;
         features = [];
         if (stored.TryGetProperty("features", out var storedFeatures) && storedFeatures.ValueKind == JsonValueKind.Array)
         {
@@ -200,7 +205,7 @@
             level = feature.Level,
             points = feature.Points.Select(point => new { x = point.X, y = point.Y })
         }).ToArray();
-        var saved = await drawingModule.InvokeAsync<bool>("saveMap", data, calibration?.MetersPerDrawingUnit);
+        var saved = await drawingModule.InvokeAsync<bool>("saveMap", data, calibration?.MetersPerDrawingUnit, warehouseName);
         if (!saved) message = "The map could not be saved in this browser's local storage.";
     }
 
@@ -228,6 +233,7 @@
                 previewUrl = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
             }
             fileName = file.Name;
+            warehouseName = Path.GetFileNameWithoutExtension(file.Name);
             importedFormat = format;
             layers = [new DrawingLayer(format == "DXF" ? "DXF drawing" : "Imported drawing")];
             features = [];
@@ -239,6 +245,52 @@
         catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException or ArgumentException)
         {
             previewUrl = null; previewMarkup = null; message = $"Could not import {file.Name}: {ex.Message}";
+        }
+    }
+
+    private async Task ImportMapFile(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file.Size > MaxImportBytes) { message = "Warehouse map JSON files must be 20 MB or smaller."; return; }
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImportBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            var document = WarehouseMapDocument.FromJson(Encoding.UTF8.GetString(memory.ToArray()));
+            warehouseName = document.Name;
+            fileName = document.SourceDrawingFile;
+            importedFormat = "WAREHOUSE MAP";
+            previewUrl = null;
+            previewMarkup = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 460'></svg>";
+            dxfContent = null;
+            layers = [new DrawingLayer("Warehouse map")];
+            features = document.ToDomainFeatures().ToList();
+            graph = NavigationGraphGenerator.Generate(features);
+            calibration = new MapCalibration(document.MetersPerDrawingUnit);
+            viewport = new DrawingViewport();
+            message = $"Loaded {features.Count} features from warehouse-map.json. The source drawing file is referenced by name only and is not embedded.";
+            await PersistMap();
+            SaveState();
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or ArgumentException)
+        {
+            message = $"Could not import {file.Name}: {exception.Message}";
+        }
+    }
+
+    private async Task ExportMap()
+    {
+        if (drawingModule is null || calibration is null || features.Count == 0) return;
+        try
+        {
+            var document = WarehouseMapDocument.Create(warehouseName, features, calibration.MetersPerDrawingUnit, fileName, importedFormat);
+            await drawingModule.InvokeVoidAsync("downloadText", "warehouse-map.json", document.ToJson(), "application/json;charset=utf-8");
+            message = $"Exported {features.Count} semantic map features to warehouse-map.json.";
+        }
+        catch (Exception exception) when (exception is JsonException or ArgumentException)
+        {
+            message = $"Could not export warehouse map: {exception.Message}";
         }
     }
 
@@ -362,8 +414,8 @@
     private static string FeatureColor(WarehouseFeatureKind kind) => kind switch { WarehouseFeatureKind.TruckAisle => "#f5bd66", WarehouseFeatureKind.Stair => "#bf91e8", WarehouseFeatureKind.Elevator => "#5fb4e5", WarehouseFeatureKind.Ramp => "#89c477", _ => "#7bd4c0" };
     private async Task Undo() { if (!history.Undo()) return; Restore(history.Current); await PersistMap(); }
     private async Task Redo() { if (!history.Redo()) return; Restore(history.Current); await PersistMap(); }
-    private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),features.ToList(),fileName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
-    private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); features=state.Features.ToList(); graph=NavigationGraphGenerator.Generate(features); fileName=state.FileName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
+    private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),features.ToList(),fileName,warehouseName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
+    private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); features=state.Features.ToList(); graph=NavigationGraphGenerator.Generate(features); fileName=state.FileName; warehouseName=state.WarehouseName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
     private sealed record MapPoint(double X, double Y);
     public async ValueTask DisposeAsync() { if (drawingModule is not null) await drawingModule.DisposeAsync(); }
 }

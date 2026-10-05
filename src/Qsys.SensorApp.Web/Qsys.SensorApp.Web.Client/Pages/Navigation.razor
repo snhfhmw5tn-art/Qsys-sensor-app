@@ -9,7 +9,7 @@
 @inject IJSRuntime JS
 
 <PageTitle>Navigation | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">MILESTONE 6 · NAVIGATION</p><h1>Navigation</h1><p class="lede">Dead reckoning from device motion, with calibrated warehouse map matching.</p></section>
+<section class="page-heading"><p class="eyebrow">MILESTONE 7 · VEHICLE DETECTION</p><h1>Navigation</h1><p class="lede">Dead reckoning from device motion, calibrated warehouse map matching and live activity classification.</p></section>
 
 <section class="sensor-controls">
     <div class="sensor-control-copy"><strong>@(isRunning ? "Navigation session active" : "Navigation session stopped")</strong><span>@mapMessage</span></div>
@@ -26,8 +26,10 @@
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@state.PositionMeters.X.ToString("0.00") / @state.PositionMeters.Y.ToString("0.00") / @state.PositionMeters.Z.ToString("0.00") m</p></div>
     <div><span class="eyebrow">HEADING</span><p>@(state.HeadingDegrees?.ToString("0.0") ?? "—")°</p></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@state.SpeedMetersPerSecond.ToString("0.00") m/s · @state.StepCount</p></div>
+    <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@state.Activity.Type · @((state.Activity.Confidence * 100).ToString("0"))%</p></div>
     <div><span class="eyebrow">CONFIDENCE · UNCERTAINTY</span><p>@((state.Confidence * 100).ToString("0"))% · ±@state.PositionUncertaintyMeters.ToString("0.00") m</p></div>
 </section>
+<p class="small-note">Activity labels are sensor-based heuristics. Truck is a low-confidence vibration candidate, not a confirmed vehicle identity.</p>
 
 <section class="navigation-empty navigation-map">
     <svg viewBox="@MapViewBox()" role="img" aria-label="Local navigation position and map graph">
@@ -56,7 +58,7 @@
     private DotNetObjectReference<Navigation>? dotnetReference;
     private DeadReckoningEngine? engine;
     private NavigationGraph graph = new([], []);
-    private NavigationState state = new(DateTimeOffset.UtcNow, Vector3.Zero, null, 0, 0, 0, 0, false, null);
+    private NavigationState state = new(DateTimeOffset.UtcNow, Vector3.Zero, null, 0, 0, 0, 0, false, null, ActivityEstimate.Unknown);
     private readonly List<Vector2> track = [];
     private bool isRunning;
     private double initialX;

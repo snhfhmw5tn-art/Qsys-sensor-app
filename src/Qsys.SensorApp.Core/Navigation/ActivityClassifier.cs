@@ -1,0 +1,58 @@
+using Qsys.SensorApp.Core.Sensors;
+
+namespace Qsys.SensorApp.Core.Navigation;
+
+/// <summary>Classifies recent motion using transparent cadence, vibration and pressure heuristics.</summary>
+public sealed class ActivityClassifier
+{
+    private const double WindowSeconds = 4;
+    private const double Gravity = 9.80665;
+    private readonly Queue<MotionSample> _samples = new();
+    private readonly Queue<DateTimeOffset> _steps = new();
+    private DateTimeOffset? _lastTimestamp;
+
+    /// <summary>Adds one sensor sample and returns the current coarse activity estimate.</summary>
+    public ActivityEstimate Update(SensorReading reading, bool stepDetected, double? relativeAltitudeMeters)
+    {
+        ArgumentNullException.ThrowIfNull(reading);
+        if (_lastTimestamp is { } last && reading.TimestampUtc <= last) return ActivityEstimate.Unknown;
+        _lastTimestamp = reading.TimestampUtc;
+        var acceleration = reading.Acceleration is { } linear ? linear.Magnitude : reading.AccelerationIncludingGravity is { } gravity ? Math.Abs(gravity.Magnitude - Gravity) : (double?)null;
+        var rotation = reading.RotationRateDegreesPerSecond?.Magnitude;
+        _samples.Enqueue(new MotionSample(reading.TimestampUtc, acceleration, rotation, relativeAltitudeMeters));
+        if (stepDetected) _steps.Enqueue(reading.TimestampUtc);
+        var cutoff = reading.TimestampUtc.AddSeconds(-WindowSeconds);
+        while (_samples.TryPeek(out var sample) && sample.Timestamp < cutoff) _samples.Dequeue();
+        while (_steps.TryPeek(out var timestamp) && timestamp < cutoff) _steps.Dequeue();
+
+        if (_samples.Count < 3) return reading.Acceleration is null && reading.AccelerationIncludingGravity is null ? ActivityEstimate.Unknown : new(ActivityType.Unknown, 0.1);
+        var seconds = Math.Max(0.5, Math.Min(WindowSeconds, (reading.TimestampUtc - _samples.Peek().Timestamp).TotalSeconds));
+        var cadence = _steps.Count / seconds;
+        var accelerationRms = Rms(_samples.Where(item => item.Acceleration is not null).Select(item => item.Acceleration!.Value));
+        var accelerationVariation = Variation(_samples.Where(item => item.Acceleration is not null).Select(item => item.Acceleration!.Value));
+        var altitudeSamples = _samples.Where(item => item.Altitude is not null).ToArray();
+        var altitudeChange = altitudeSamples.Length > 1 ? altitudeSamples[^1].Altitude!.Value - altitudeSamples[0].Altitude!.Value : 0;
+        var verticalRate = Math.Abs(altitudeChange) / seconds;
+
+        if (altitudeSamples.Length > 1 && Math.Abs(altitudeChange) >= 0.45 && cadence < 0.35)
+            return new(ActivityType.Elevator, Math.Clamp(0.55 + Math.Abs(altitudeChange) * 0.12, 0.55, 0.9));
+        if (altitudeSamples.Length > 1 && Math.Abs(altitudeChange) >= 0.18 && cadence >= 0.35 && cadence < 2.7)
+            return new(ActivityType.Stairs, Math.Clamp(0.5 + Math.Abs(altitudeChange) * 0.25 + Math.Min(cadence, 1.5) * 0.08, 0.5, 0.88));
+        if (cadence >= 2.15)
+            return new(ActivityType.Running, Math.Clamp(0.5 + (cadence - 2.15) * 0.18 + Math.Min(accelerationRms, 2) * 0.08, 0.5, 0.92));
+        if (cadence >= 0.45)
+            return new(ActivityType.Walking, Math.Clamp(0.48 + Math.Min(cadence, 1.8) * 0.18, 0.48, 0.82));
+        if (accelerationVariation >= 0.18 && accelerationVariation < 1.8 && verticalRate < 0.08 && cadence < 0.45)
+            return new(ActivityType.Truck, Math.Clamp(0.35 + accelerationVariation * 0.12, 0.35, 0.62));
+        if (accelerationRms < 0.3 && accelerationVariation < 0.2 && (reading.Acceleration is not null || reading.AccelerationIncludingGravity is not null))
+            return new(ActivityType.Standing, Math.Clamp(0.78 - accelerationRms * 0.5, 0.5, 0.78));
+        return new(ActivityType.Unknown, 0.2);
+    }
+
+    /// <summary>Clears the classifier's rolling window.</summary>
+    public void Reset() { _samples.Clear(); _steps.Clear(); _lastTimestamp = null; }
+
+    private static double Rms(IEnumerable<double> values) { var data = values.ToArray(); return data.Length == 0 ? 0 : Math.Sqrt(data.Sum(value => value * value) / data.Length); }
+    private static double Variation(IEnumerable<double> values) { var data = values.ToArray(); if (data.Length < 2) return 0; var mean = data.Average(); return Math.Sqrt(data.Sum(value => (value - mean) * (value - mean)) / data.Length); }
+    private sealed record MotionSample(DateTimeOffset Timestamp, double? Acceleration, double? Rotation, double? Altitude);
+}

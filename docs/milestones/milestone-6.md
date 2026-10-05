@@ -7,7 +7,7 @@
 - Two-dimensional Kalman position filter and bounded nearest-edge map matching on the configured floor.
 - Navigation page with session controls, initial local position and heading, step length, live X/Y/Z, speed, heading, step count, confidence, uncertainty and a position trace.
 - Drawing features and calibrated scale are saved in browser local storage and read by Navigation. Drawing coordinates are scaled to metres and Y is inverted so north is positive.
-- About page now identifies Milestone 6 as the current milestone.
+- The About page identified Milestone 6 as current when delivered; Milestone 7 supersedes that status.
 
 ## Coordinate and sensor assumptions
 

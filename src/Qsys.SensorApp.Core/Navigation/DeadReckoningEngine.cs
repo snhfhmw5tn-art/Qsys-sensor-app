@@ -10,6 +10,7 @@ public sealed class DeadReckoningEngine
     private const double StandardAtmosphereKilopascals = 101.325;
     private readonly KalmanPositionFilter _positionFilter;
     private readonly StepDetector _stepDetector;
+    private readonly ActivityClassifier _activityClassifier = new();
     private readonly double _stepLengthMeters;
     private readonly double _mapMatchToleranceMeters;
     private readonly NavigationGraph? _graph;
@@ -44,7 +45,7 @@ public sealed class DeadReckoningEngine
         _graph = graph;
         _mapMatchToleranceMeters = mapMatchToleranceMeters;
         _level = level;
-        State = new NavigationState(DateTimeOffset.UtcNow, initialPositionMeters, _headingDegrees, 0, 0, 0.15, _positionFilter.StandardDeviation, false, null);
+        State = new NavigationState(DateTimeOffset.UtcNow, initialPositionMeters, _headingDegrees, 0, 0, 0.15, _positionFilter.StandardDeviation, false, null, ActivityEstimate.Unknown);
     }
 
     /// <summary>Gets the latest navigation estimate.</summary>
@@ -86,6 +87,7 @@ public sealed class DeadReckoningEngine
         }
 
         UpdateAltitude(reading.PressureKilopascals);
+        var activity = _activityClassifier.Update(reading, step.Detected, _altitudeMeters);
 
         MapMatchResult? mapMatch = null;
         if (_graph is { Edges.Count: > 0 })
@@ -102,7 +104,7 @@ public sealed class DeadReckoningEngine
         var uncertaintyQuality = 1 / (1 + (_positionFilter.StandardDeviation / 10));
         var confidence = Math.Clamp(sensorQuality * uncertaintyQuality, 0, 1);
         var position = new Vector3(_positionFilter.Position.X, _positionFilter.Position.Y, _altitudeMeters ?? 0);
-        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _stepDetector.StepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position);
+        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _stepDetector.StepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position, activity);
         return State;
     }
 

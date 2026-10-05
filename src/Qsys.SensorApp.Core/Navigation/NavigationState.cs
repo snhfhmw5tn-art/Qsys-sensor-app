@@ -12,4 +12,5 @@ public sealed record NavigationState(
     double Confidence,
     double PositionUncertaintyMeters,
     bool IsMapMatched,
-    Vector2? MapMatchedPositionMeters);
+    Vector2? MapMatchedPositionMeters,
+    ActivityEstimate Activity);

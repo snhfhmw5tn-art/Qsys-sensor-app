@@ -1,7 +1,208 @@
 @page "/drawing"
+@using System.Globalization
+@using System.Text
+@using System.Xml
+@using Microsoft.AspNetCore.Components.Forms
+@implements IDisposable
 <PageTitle>Drawing | Qsys Sensor App</PageTitle>
-<section class="page-heading"><p class="eyebrow">MAP WORKSPACE</p><h1>Drawing</h1><p class="lede">A clear view of the warehouse plan and its active layers.</p></section>
-<div class="drawing-toolbar"><span class="toolbar-title">North warehouse <span class="muted">/ Floor 1</span></span><span class="toolbar-actions"><button class="quiet-button" @onclick="ZoomOut" aria-label="Zoom out">−</button><span>@zoom%</span><button class="quiet-button" @onclick="ZoomIn" aria-label="Zoom in">+</button><button class="quiet-button" @onclick="ResetZoom">Reset</button></span></div>
-<div class="map-layout"><section class="map-canvas" aria-label="Warehouse drawing"><svg viewBox="0 0 800 460" role="img" aria-label="Illustrative warehouse floor plan" style="transform:scale(@(zoom / 100.0));"><rect x="24" y="24" width="752" height="412" rx="8" class="floor"/><path d="M85 100H715M85 180H715M85 260H715M85 340H715" class="aisle"/><path d="M170 66V390M330 66V390M490 66V390M650 66V390" class="rack-line"/><g class="rack" style="display:@(showRacks ? "initial" : "none")"><rect x="105" y="118" width="130" height="40"/><rect x="265" y="198" width="130" height="40"/><rect x="425" y="278" width="130" height="40"/><rect x="585" y="118" width="130" height="40"/></g><g style="display:@(showRoute ? "initial" : "none")"><path d="M100 380 C220 380 240 300 400 300 S560 220 700 220" class="route"/><circle cx="100" cy="380" r="9" class="marker"/><circle cx="700" cy="220" r="9" class="destination"/></g><text x="46" y="55">RECEIVING</text><text x="658" y="415">DOCK 04</text></svg></section>
-<aside class="layer-panel"><h2>Layers</h2><label><input type="checkbox" @bind="showRacks" /> Storage racks</label><label><input type="checkbox" @bind="showRoute" /> Route preview</label><p class="small-note">Illustrative preview · no map imported</p></aside></div>
-@code { private int zoom = 100; private bool showRacks = true; private bool showRoute = true; private void ZoomIn() => zoom = Math.Min(160, zoom + 10); private void ZoomOut() => zoom = Math.Max(60, zoom - 10); private void ResetZoom() => zoom = 100; }
+<section class="page-heading"><p class="eyebrow">MILESTONE 3 · DRAWING ENGINE</p><h1>Drawing</h1><p class="lede">Import a warehouse plan, calibrate its scale and prepare a layered map for editing.</p></section>
+
+<div class="drawing-toolbar">
+    <span class="toolbar-title">@(fileName ?? "Untitled warehouse") <span class="muted">/ @(fileName is null ? "No drawing imported" : importedFormat)</span></span>
+    <span class="toolbar-actions">
+        <label class="quiet-button import-button">Import drawing<InputFile OnChange="ImportFile" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.svg,.tif,.tiff,.dxf,.dwg" /></label>
+        <button class="quiet-button" @onclick="Undo" disabled="!history.CanUndo" aria-label="Undo">↶ Undo</button>
+        <button class="quiet-button" @onclick="Redo" disabled="!history.CanRedo" aria-label="Redo">↷ Redo</button>
+        <button class="quiet-button" @onclick="() => ChangeView(viewport.Scale(1.15))" aria-label="Zoom in">+</button>
+        <span>@Math.Round(viewport.Zoom * 100)%</span>
+        <button class="quiet-button" @onclick="() => ChangeView(viewport.Scale(1 / 1.15))" aria-label="Zoom out">−</button>
+        <button class="quiet-button" @onclick="ResetView">Reset</button>
+        <button class="quiet-button" @onclick="() => ChangeView(viewport.Rotate(90))">Rotate 90°</button>
+    </span>
+</div>
+@if (!string.IsNullOrWhiteSpace(message)) { <p class="drawing-message" role="status">@message</p> }
+<div class="map-layout">
+    <section class="map-canvas" aria-label="Warehouse drawing" @onpointerdown="StartPan" @onpointerup="EndPan" @onpointerleave="EndPan" @onpointermove="MovePan" @onwheel="ZoomWheel" @onwheel:preventDefault="true">
+        @if (previewUrl is not null || previewMarkup is not null)
+        {
+            @if (importedFormat == "SVG" || importedFormat == "DXF") { if (layers.Any(layer => layer.IsVisible)) { <div class="drawing-image" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)">@((MarkupString)(previewMarkup ?? string.Empty))</div> } else { <div class="unsupported-preview">All drawing layers are hidden.</div> } }
+            else if (importedFormat == "TIFF") { <div class="unsupported-preview"><strong>TIFF recognized</strong><span>This browser cannot preview TIFF. Convert it to PNG for an in-canvas preview.</span></div> }
+            else if (layers.Any(layer => layer.IsVisible)) { <img class="drawing-image" src="@previewUrl" alt="Imported warehouse drawing" draggable="false" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)" /> }
+            else { <div class="unsupported-preview">All drawing layers are hidden.</div> }
+        }
+        else
+        {
+            <svg class="drawing-image sample-drawing" viewBox="0 0 800 460" role="img" aria-label="Illustrative warehouse floor plan" style="transform:translate(@(viewport.PanX)px,@(viewport.PanY)px) scale(@viewport.Zoom) rotate(@(viewport.RotationDegrees)deg)">
+                <rect x="24" y="24" width="752" height="412" rx="8" class="floor"/><path d="M85 100H715M85 180H715M85 260H715M85 340H715" class="aisle"/><path d="M170 66V390M330 66V390M490 66V390M650 66V390" class="rack-line"/>
+                @if (layers.FirstOrDefault(layer => layer.Name == "Racks")?.IsVisible ?? true) { <g class="rack"><rect x="105" y="118" width="130" height="40"/><rect x="265" y="198" width="130" height="40"/><rect x="425" y="278" width="130" height="40"/><rect x="585" y="118" width="130" height="40"/></g> }
+                @if (layers.FirstOrDefault(layer => layer.Name == "Route")?.IsVisible ?? true) { <g><path d="M100 380 C220 380 240 300 400 300 S560 220 700 220" class="route"/><circle cx="100" cy="380" r="9" class="marker"/><circle cx="700" cy="220" r="9" class="destination"/></g> }
+                <text x="46" y="55">RECEIVING</text><text x="658" y="415">DOCK 04</text>
+            </svg>
+        }
+        @if (isPanning) { <span class="pan-hint">Drag to pan · scroll to zoom</span> }
+    </section>
+    <aside class="layer-panel">
+        <h2>Layers</h2>
+        @foreach (var layer in layers) { <label><input type="checkbox" checked="@layer.IsVisible" @onchange="e => SetLayer(layer.Name, (bool)e.Value!)" disabled="@layer.IsLocked" /> @layer.Name</label> }
+        @if (layers.Count == 0) { <p class="small-note">Layers from the imported map appear here.</p> }
+        <hr />
+        <h2>Calibration</h2><p class="small-note">Define the real distance represented by the drawing.</p>
+        <label>Known distance (m) <input type="number" min="0.001" step="any" @bind="calibrationRealDistance" /></label>
+        <button class="quiet-button" @onclick="BeginCalibration">@if(calibrationMode) { <span>Cancel calibration</span> } else { <span>Pick two points</span> }</button>
+        @if (calibrationMode) { <p class="small-note">Click two points on the map (@calibrationPoints.Count/2 selected).</p> }
+        @if (calibration is not null) { <p class="small-note">Scale: @calibration.MetersPerDrawingUnit.ToString("0.####", CultureInfo.InvariantCulture) m / drawing unit</p> }
+        <hr />
+        <h2>Snap</h2><label><input type="checkbox" @bind="snapEnabled" /> Snap to grid</label>
+        <label>Grid size <input type="number" min="0.01" step="any" @bind="gridSize" disabled="@(!snapEnabled)" /></label>
+        <p class="small-note">@if(fileName is null) { <span>Illustrative preview · import a drawing to begin.</span> }</p>
+    </aside>
+</div>
+
+@code {
+    private const long MaxImportBytes = 20 * 1024 * 1024;
+    private DrawingViewport viewport = new();
+    private readonly DrawingHistory<EditorState> history = new(new EditorState(new(), [], null, "", null, null, null, null));
+    private List<DrawingLayer> layers = [new("Racks"), new("Route")];
+    private string? fileName;
+    private string importedFormat = "";
+    private string? previewUrl;
+    private string? previewMarkup;
+    private string? dxfContent;
+    private string? message;
+    private bool isPanning;
+    private DrawingViewport panStartView = new();
+    private (double X, double Y) lastPointer;
+    private bool snapEnabled;
+    private double gridSize = 1;
+    private double calibrationRealDistance = 10;
+    private MapCalibration? calibration;
+    private bool calibrationMode;
+    private readonly List<(double X, double Y)> calibrationPoints = [];
+    private sealed record DrawingLayer(string Name, bool IsVisible = true, bool IsLocked = false);
+    private sealed record DrawingViewport(double Zoom = 1, double PanX = 0, double PanY = 0, double RotationDegrees = 0)
+    {
+        public DrawingViewport Scale(double factor) => this with { Zoom = Math.Clamp(Zoom * factor, 0.1, 10) };
+        public DrawingViewport Translate(double x, double y) => this with { PanX = PanX + x, PanY = PanY + y };
+        public DrawingViewport Rotate(double degrees) => this with { RotationDegrees = (RotationDegrees + degrees) % 360 };
+    }
+    private sealed record MapCalibration(double MetersPerDrawingUnit);
+    private sealed class DrawingHistory<T>(T initialState) where T : notnull
+    {
+        private const int Capacity = 10;
+        private readonly List<T> states = [initialState];
+        private int current;
+        public T Current => states[current];
+        public bool CanUndo => current > 0;
+        public bool CanRedo => current < states.Count - 1;
+        public void Push(T state) { states.RemoveRange(current + 1, states.Count - current - 1); states.Add(state); if (states.Count > Capacity) states.RemoveAt(0); current = states.Count - 1; }
+        public bool Undo() { if (!CanUndo) return false; current--; return true; }
+        public bool Redo() { if (!CanRedo) return false; current++; return true; }
+    }
+    private record EditorState(DrawingViewport Viewport, List<DrawingLayer> Layers, string? FileName, string Format, MapCalibration? Calibration, string? PreviewUrl, string? PreviewMarkup, string? DxfContent);
+
+    private async Task ImportFile(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        var extension = Path.GetExtension(file.Name).ToLowerInvariant();
+        var format = extension switch { ".png" => "PNG", ".jpg" or ".jpeg" => "JPEG", ".webp" => "WebP", ".bmp" => "BMP", ".gif" => "GIF", ".svg" => "SVG", ".tif" or ".tiff" => "TIFF", ".dxf" => "DXF", ".dwg" => "DWG", _ => "" };
+        if (format.Length == 0) { message = "Unsupported file type."; return; }
+        if (format == "DWG") { message = "DWG import requires a licensed commercial CAD converter. No DWG provider is configured; export the drawing as DXF and import that instead."; return; }
+        if (file.Size > MaxImportBytes) { message = "Files must be 20 MB or smaller."; return; }
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImportBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            var bytes = memory.ToArray();
+            previewUrl = null;
+            previewMarkup = null;
+            if (format == "SVG") previewMarkup = SanitizeSvg(bytes);
+            else if (format == "DXF") { dxfContent = Encoding.UTF8.GetString(bytes); previewMarkup = DxfToSvg(dxfContent); }
+            else
+            {
+                var mime = format switch { "PNG" => "image/png", "JPEG" => "image/jpeg", "WebP" => "image/webp", "BMP" => "image/bmp", "GIF" => "image/gif", "TIFF" => "image/tiff", _ => "application/octet-stream" };
+                previewUrl = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+            }
+            fileName = file.Name;
+            importedFormat = format;
+            layers = [new DrawingLayer(format == "DXF" ? "DXF drawing" : "Imported drawing")];
+            viewport = new DrawingViewport(); calibration = null; message = format == "DXF" ? "DXF imported. Common LINE, CIRCLE and LWPOLYLINE entities are rendered; other entities are skipped." : $"{format} drawing imported.";
+            SaveState();
+        }
+        catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException or ArgumentException)
+        {
+            previewUrl = null; previewMarkup = null; message = $"Could not import {file.Name}: {ex.Message}";
+        }
+    }
+
+    private static string SanitizeSvg(byte[] bytes)
+    {
+        using var input = new MemoryStream(bytes);
+        using var reader = XmlReader.Create(input, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaxImportBytes });
+        var document = new XmlDocument { XmlResolver = null };
+        document.Load(reader);
+        if (document.DocumentElement?.LocalName != "svg") throw new InvalidDataException("The file does not contain an SVG root element.");
+        foreach (XmlNode node in document.SelectNodes("//*[local-name()='script' or local-name()='foreignObject']")!.Cast<XmlNode>().ToArray()) node.ParentNode?.RemoveChild(node);
+        foreach (XmlNode node in document.SelectNodes("//*[local-name()='style']")!.Cast<XmlNode>().ToArray()) node.ParentNode?.RemoveChild(node);
+        foreach (XmlElement element in document.SelectNodes("//*")!.OfType<XmlElement>())
+            foreach (XmlAttribute attr in element.Attributes.Cast<XmlAttribute>().ToArray())
+                if (attr.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) || ((attr.LocalName is "href" or "src") && !attr.Value.StartsWith('#')) || attr.Value.Contains("url(", StringComparison.OrdinalIgnoreCase)) element.RemoveAttributeNode(attr);
+        using var output = new StringWriter(CultureInfo.InvariantCulture);
+        using (var writer = XmlWriter.Create(output, new XmlWriterSettings { OmitXmlDeclaration = true })) document.Save(writer);
+        return output.ToString();
+    }
+
+    private static string DxfToSvg(string dxf)
+    {
+        var lines = dxf.Replace("\r", "").Split('\n');
+        var pairs = new List<(int Code, string Value)>();
+        for (var i = 0; i + 1 < lines.Length; i += 2)
+            if (int.TryParse(lines[i].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var code)) pairs.Add((code, lines[i + 1].Trim()));
+        var shapes = new List<string>();
+        var points = new List<(double X, double Y)>();
+        var minX = double.PositiveInfinity; var minY = double.PositiveInfinity; var maxX = double.NegativeInfinity; var maxY = double.NegativeInfinity;
+        void AddPoint(double x, double y) { if (!double.IsFinite(x) || !double.IsFinite(y)) return; points.Add((x, y)); minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y); }
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            if (pairs[i] is not (0, "LINE" or "CIRCLE" or "LWPOLYLINE")) continue;
+            var kind = pairs[i].Value; var end = i + 1; while (end < pairs.Count && pairs[end].Code != 0) end++;
+            var entity = pairs.Skip(i + 1).Take(end - i - 1).ToList();
+            double Val(int code, int occurrence = 0) => double.TryParse(entity.Where(p => p.Code == code).Skip(occurrence).Select(p => p.Value).FirstOrDefault(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : 0;
+            if (kind == "LINE") { var x1=Val(10); var y1=Val(20); var x2=Val(11); var y2=Val(21); AddPoint(x1,y1); AddPoint(x2,y2); shapes.Add($"<line x1='{x1}' y1='{y1}' x2='{x2}' y2='{y2}'/>"); }
+            else if (kind == "CIRCLE") { var x=Val(10); var y=Val(20); var radius=Val(40); AddPoint(x-radius,y-radius); AddPoint(x+radius,y+radius); shapes.Add($"<circle cx='{x}' cy='{y}' r='{radius}'/>"); }
+            else { var vertices = entity.Select((p, index) => (p, index)).Where(x => x.p.Code == 10).Select(x => (X: double.Parse(x.p.Value, CultureInfo.InvariantCulture), Y: Val(20, entity.Take(x.index).Count(p => p.Code == 20)))).ToList(); foreach (var point in vertices) AddPoint(point.X,point.Y); if (vertices.Count > 1) shapes.Add($"<polyline points='{string.Join(" ", vertices.Select(p => $"{p.X},{p.Y}"))}'/>"); }
+            i = end - 1;
+        }
+        if (shapes.Count == 0) throw new InvalidDataException("No supported LINE, CIRCLE or LWPOLYLINE entities were found in the DXF.");
+        var width = Math.Max(1, maxX - minX); var height = Math.Max(1, maxY - minY); var margin = Math.Max(width, height) * 0.04;
+        return $"<svg xmlns='http://www.w3.org/2000/svg' viewBox='{minX-margin} {-maxY-margin} {width+2*margin} {height+2*margin}'><g transform='scale(1,-1)' fill='none' stroke='#245a82' stroke-width='{Math.Max(width,height)*0.002}'>{string.Join("", shapes)}</g></svg>";
+    }
+
+    private void ChangeView(DrawingViewport next) { viewport=next; SaveState(); }
+    private void ResetView() { viewport=new DrawingViewport(); SaveState(); }
+    private void StartPan(PointerEventArgs args)
+    {
+        if (calibrationMode) { SelectCalibrationPoint(args.OffsetX, args.OffsetY); return; }
+        isPanning=true; panStartView=viewport; lastPointer=(args.ClientX,args.ClientY);
+    }
+    private void EndPan(PointerEventArgs _) { if (!isPanning) return; isPanning=false; if (panStartView != viewport) SaveState(); }
+    private void MovePan(PointerEventArgs args) { if (!isPanning) return; var dx=args.ClientX-lastPointer.X; var dy=args.ClientY-lastPointer.Y; viewport=viewport.Translate(dx,dy); lastPointer=(args.ClientX,args.ClientY); }
+    private void ZoomWheel(WheelEventArgs args) => ChangeView(viewport.Scale(args.DeltaY < 0 ? 1.1 : 1/1.1));
+    private void SetLayer(string name, bool visible) { layers=layers.Select(layer=>layer.Name==name ? layer with { IsVisible=visible } : layer).ToList(); if (importedFormat=="DXF" && dxfContent is not null) previewMarkup=DxfToSvg(dxfContent); SaveState(); }
+    private void BeginCalibration() { calibrationPoints.Clear(); calibrationMode=!calibrationMode; message=calibrationMode ? "Select two points with a known distance between them." : "Calibration canceled."; }
+    private void SelectCalibrationPoint(double x, double y)
+    {
+        if (snapEnabled && double.IsFinite(gridSize) && gridSize > 0) { x=Math.Round(x/gridSize)*gridSize; y=Math.Round(y/gridSize)*gridSize; }
+        calibrationPoints.Add((x,y));
+        if (calibrationPoints.Count < 2) { message="First calibration point selected. Select the second point."; return; }
+        var dx=calibrationPoints[1].X-calibrationPoints[0].X; var dy=calibrationPoints[1].Y-calibrationPoints[0].Y;
+        var drawingDistance=Math.Sqrt(dx*dx+dy*dy)/viewport.Zoom;
+        if (!double.IsFinite(calibrationRealDistance) || calibrationRealDistance <= 0 || drawingDistance <= 0) { message="Enter a positive known distance and select two different points."; calibrationPoints.Clear(); return; }
+        calibration=new MapCalibration(calibrationRealDistance/drawingDistance); calibrationMode=false; calibrationPoints.Clear(); message="Map scale calibrated."; SaveState();
+    }
+    private void Undo() { if (!history.Undo()) return; Restore(history.Current); }
+    private void Redo() { if (!history.Redo()) return; Restore(history.Current); }
+    private void SaveState() => history.Push(new EditorState(viewport,layers.ToList(),fileName,importedFormat,calibration,previewUrl,previewMarkup,dxfContent));
+    private void Restore(EditorState state) { viewport=state.Viewport; layers=state.Layers.ToList(); fileName=state.FileName; importedFormat=state.Format; calibration=state.Calibration; previewUrl=state.PreviewUrl; previewMarkup=state.PreviewMarkup; dxfContent=state.DxfContent; }
+    public void Dispose() { }
+}

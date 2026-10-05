@@ -1,0 +1,2 @@
+.calibration-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-block: 1.25rem; }
+.calibration-summary p { margin: .45rem 0 0; font-size: 1rem; }

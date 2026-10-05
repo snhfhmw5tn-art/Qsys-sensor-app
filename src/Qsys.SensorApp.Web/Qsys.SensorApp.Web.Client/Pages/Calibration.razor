@@ -1,0 +1,183 @@
+@page "/calibration"
+@using System.Globalization
+@using System.Text
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using Microsoft.JSInterop
+@using Qsys.SensorApp.Core.Navigation
+@using Qsys.SensorApp.Core.Sensors
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<PageTitle>Calibration | Qsys Sensor App</PageTitle>
+<section class="page-heading"><p class="eyebrow">MILESTONE 8 · CALIBRATION MODE</p><h1>Calibration</h1><p class="lede">Record labeled device motion and export raw measurements with derived sensor features.</p></section>
+
+<section class="sensor-controls">
+    <div class="sensor-control-copy"><strong>@(isRecording ? $"Recording {activeRecording?.Activity}" : "Ready to record")</strong><span>Samples remain in this page's memory until you export them or close the page. Use a consistent phone position for each activity.</span></div>
+    <label>Activity label <select @bind="selectedActivity" disabled="@isRecording"><option value="Walking">Walking</option><option value="Truck">Truck</option><option value="Standing">Standing</option><option value="Stairs">Stairs</option><option value="Elevator">Elevator</option></select></label>
+    @if (isRecording) { <button class="quiet-button" @onclick="StopRecording">Stop recording</button> }
+    else { <button class="primary-link" @onclick="StartRecording" disabled="@(sensorModule is null || isStarting)">@(isStarting ? "Requesting sensor access…" : "Allow sensors and record")</button> }
+    <button class="quiet-button" @onclick="ExportJson" disabled="@(sampleCount == 0)">Export JSON</button>
+    <button class="quiet-button" @onclick="ExportCsv" disabled="@(sampleCount == 0)">Export CSV</button>
+    <button class="quiet-button" @onclick="ClearRecordings" disabled="@(isRecording || sampleCount == 0)">Clear recordings</button>
+</section>
+@if (!string.IsNullOrWhiteSpace(message)) { <p class="sensor-message" role="status">@message</p> }
+
+<section class="about-panel calibration-summary">
+    <div><span class="eyebrow">SAMPLES</span><p>@sampleCount.ToString("N0", CultureInfo.InvariantCulture)</p></div>
+    <div><span class="eyebrow">RECORDINGS</span><p>@recordings.Count</p></div>
+    <div><span class="eyebrow">CLASS LABELS</span><p>@string.Join(" · ", recordings.Select(item => item.Activity).Distinct().Order().Select(item => $"{item} ({recordings.Where(run => run.Activity == item).Sum(run => run.Samples.Count)})"))</p></div>
+</section>
+<section class="sensor-diagnostics">
+    <div class="sensor-section-heading"><div><p class="eyebrow">DATASET</p><h2>Recorded activities</h2></div></div>
+    @if (recordings.Count == 0) { <p class="small-note">No recordings yet. Select an activity, keep the device in its normal position and record a representative sample.</p> }
+    else
+    {
+        <div class="reading-table-wrap"><table class="reading-table"><thead><tr><th>Label</th><th>Started (local)</th><th>Duration</th><th>Samples</th><th>Mean sample rate</th></tr></thead><tbody>
+            @foreach (var run in recordings) { <tr><td>@run.Activity</td><td>@run.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td><td>@Duration(run)</td><td>@run.Samples.Count.ToString("N0", CultureInfo.InvariantCulture)</td><td>@Rate(run)</td></tr> }
+        </tbody></table></div>
+    }
+</section>
+<p class="small-note">Features include acceleration magnitude, gyro and magnetometer magnitude, heading, pitch, roll and pressure. Truck labels are manually supplied training labels; recordings alone do not train or validate a classifier.</p>
+
+@code {
+    private const int MaximumSamples = 25_000;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
+    private IJSObjectReference? sensorModule;
+    private DotNetObjectReference<Calibration>? dotnetReference;
+    private readonly List<CalibrationRecording> recordings = [];
+    private CalibrationRecording? activeRecording;
+    private CalibrationActivity selectedActivity = CalibrationActivity.Walking;
+    private bool isRecording;
+    private bool isStarting;
+    private string? message;
+    private DateTime lastUiUpdateUtc = DateTime.MinValue;
+    private int sampleCount => recordings.Sum(recording => recording.Samples.Count);
+
+    private sealed class CalibrationRecording(CalibrationActivity activity, DateTimeOffset startedUtc)
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public CalibrationActivity Activity { get; } = activity;
+        public DateTimeOffset StartedUtc { get; } = startedUtc;
+        public DateTimeOffset? EndedUtc { get; set; }
+        public List<CalibrationSample> Samples { get; } = [];
+    }
+    private sealed record CalibrationSample(int Index, SensorReading Reading, SensorFeatureVector Features);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { sensorModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js"); }
+        catch (JSException exception) { message = $"Could not initialize browser sensors: {exception.Message}"; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartRecording()
+    {
+        if (sensorModule is null || isStarting || isRecording) return;
+        if (sampleCount >= MaximumSamples) { message = $"Dataset limit reached ({MaximumSamples:N0} samples). Export or clear it before recording more."; return; }
+        isStarting = true;
+        activeRecording = new CalibrationRecording(selectedActivity, DateTimeOffset.UtcNow);
+        dotnetReference?.Dispose(); dotnetReference = DotNetObjectReference.Create(this);
+        try
+        {
+            using var result = await sensorModule.InvokeAsync<JsonDocument>("start", dotnetReference, 25);
+            recordings.Add(activeRecording);
+            isRecording = true;
+            message = $"Recording {selectedActivity}. Keep the phone position steady and record a representative activity segment.";
+        }
+        catch (JSException exception) { activeRecording = null; isRecording = false; message = exception.Message; }
+        finally { isStarting = false; }
+    }
+
+    private async Task StopRecording()
+    {
+        if (sensorModule is not null) await sensorModule.InvokeVoidAsync("stop");
+        if (activeRecording is not null) activeRecording.EndedUtc = DateTimeOffset.UtcNow;
+        activeRecording = null; isRecording = false;
+        message = "Recording stopped. Export the dataset before leaving this page.";
+    }
+
+    [JSInvokable]
+    public async Task OnSensorReading(JsonElement sample)
+    {
+        if (!isRecording || activeRecording is null) return;
+        try
+        {
+            var millis = Number(sample, "timestampUnixMilliseconds") ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var reading = new SensorReading(DateTimeOffset.FromUnixTimeMilliseconds((long)millis), Number(sample, "samplingIntervalMilliseconds") ?? 0,
+                Vector(sample, "acceleration"), Vector(sample, "accelerationIncludingGravity"), Vector(sample, "rotationRate"), Vector(sample, "magneticField"),
+                Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
+            activeRecording.Samples.Add(new CalibrationSample(activeRecording.Samples.Count, reading, SensorFeatureExtractor.Extract(reading)));
+            if (sampleCount >= MaximumSamples)
+            {
+                await StopRecording();
+                message = $"Dataset reached its {MaximumSamples:N0}-sample safety limit. Export or clear before starting another recording.";
+            }
+            else if ((DateTime.UtcNow - lastUiUpdateUtc).TotalMilliseconds >= 200)
+            {
+                lastUiUpdateUtc = DateTime.UtcNow;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (ArgumentException exception) { message = $"Invalid sensor sample: {exception.Message}"; await InvokeAsync(StateHasChanged); }
+    }
+
+    [JSInvokable]
+    public async Task OnSensorDiagnostic(JsonElement diagnostic)
+    {
+        var kind = diagnostic.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "Sensor" : "Sensor";
+        var detail = diagnostic.TryGetProperty("message", out var messageValue) ? messageValue.GetString() ?? "Unknown sensor error." : "Unknown sensor error.";
+        message = $"{kind}: {detail}";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ExportJson()
+    {
+        var data = new { schemaVersion = 1, exportedAtUtc = DateTimeOffset.UtcNow, description = "Labeled sensor calibration recordings and derived per-sample features.", recordings };
+        await Download($"qsys-calibration-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json", JsonSerializer.Serialize(data, JsonOptions), "application/json;charset=utf-8");
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = new StringBuilder("session_id,label,sample_index,timestamp_utc,sampling_interval_ms,accel_x,accel_y,accel_z,accel_including_gravity_x,accel_including_gravity_y,accel_including_gravity_z,linear_acceleration_magnitude,gyro_x,gyro_y,gyro_z,gyro_magnitude,magnetometer_x,magnetometer_y,magnetometer_z,magnetometer_magnitude,heading_deg,pitch_deg,roll_deg,pressure_kpa\r\n");
+        foreach (var run in recordings)
+        foreach (var sample in run.Samples)
+        {
+            var reading = sample.Reading; var feature = sample.Features;
+            csv.Append(run.Id).Append(',').Append(run.Activity).Append(',').Append(sample.Index).Append(',').Append(reading.TimestampUtc.ToString("O", CultureInfo.InvariantCulture)).Append(',')
+                .Append(F(reading.SamplingIntervalMilliseconds)).Append(',').Append(F(reading.Acceleration?.X)).Append(',').Append(F(reading.Acceleration?.Y)).Append(',').Append(F(reading.Acceleration?.Z)).Append(',')
+                .Append(F(reading.AccelerationIncludingGravity?.X)).Append(',').Append(F(reading.AccelerationIncludingGravity?.Y)).Append(',').Append(F(reading.AccelerationIncludingGravity?.Z)).Append(',').Append(F(feature.LinearAccelerationMagnitude)).Append(',')
+                .Append(F(reading.RotationRateDegreesPerSecond?.X)).Append(',').Append(F(reading.RotationRateDegreesPerSecond?.Y)).Append(',').Append(F(reading.RotationRateDegreesPerSecond?.Z)).Append(',').Append(F(feature.GyroscopeMagnitude)).Append(',')
+                .Append(F(reading.MagneticFieldMicrotesla?.X)).Append(',').Append(F(reading.MagneticFieldMicrotesla?.Y)).Append(',').Append(F(reading.MagneticFieldMicrotesla?.Z)).Append(',').Append(F(feature.MagnetometerMagnitude)).Append(',')
+                .Append(F(reading.HeadingDegrees)).Append(',').Append(F(reading.PitchDegrees)).Append(',').Append(F(reading.RollDegrees)).Append(',').Append(F(reading.PressureKilopascals)).Append("\r\n");
+        }
+        await Download($"qsys-calibration-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv", csv.ToString(), "text/csv;charset=utf-8");
+    }
+
+    private async Task Download(string fileName, string content, string mimeType)
+    {
+        if (sensorModule is null) return;
+        await sensorModule.InvokeVoidAsync("downloadText", fileName, content, mimeType);
+        message = $"Exported {sampleCount:N0} samples to {fileName}.";
+    }
+
+    private void ClearRecordings() { recordings.Clear(); message = "Calibration recordings cleared."; }
+    private static string F(double? value) => value is null ? string.Empty : value.Value.ToString("G17", CultureInfo.InvariantCulture);
+    private static string Duration(CalibrationRecording recording) => ((recording.EndedUtc ?? DateTimeOffset.UtcNow) - recording.StartedUtc).ToString("hh\\:mm\\:ss");
+    private static string Rate(CalibrationRecording recording) => recording.Samples.Count < 2 ? "—" : $"{(recording.Samples.Count - 1) / (recording.Samples[^1].Reading.TimestampUtc - recording.Samples[0].Reading.TimestampUtc).TotalSeconds:0.0} Hz";
+    private static double? Number(JsonElement sample, string key) => sample.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+    private static bool Boolean(JsonElement sample, string key) => sample.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.True;
+    private static SensorVector3? Vector(JsonElement sample, string prefix)
+    {
+        var x = Number(sample, $"{prefix}X"); var y = Number(sample, $"{prefix}Y"); var z = Number(sample, $"{prefix}Z");
+        return x is null || y is null || z is null ? null : new SensorVector3(x.Value, y.Value, z.Value);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (sensorModule is not null) { try { await sensorModule.InvokeVoidAsync("stop"); } catch (JSDisconnectedException) { } await sensorModule.DisposeAsync(); }
+        dotnetReference?.Dispose();
+        dotnetReference?.Dispose();
+    }
+}

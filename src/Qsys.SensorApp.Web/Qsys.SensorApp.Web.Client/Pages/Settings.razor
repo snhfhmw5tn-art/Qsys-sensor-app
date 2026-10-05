@@ -1,0 +1,5 @@
+@page "/settings"
+<PageTitle>Settings | Qsys Sensor App</PageTitle>
+<section class="page-heading"><p class="eyebrow">PREFERENCES</p><h1>Settings</h1><p class="lede">Configure this browser workspace.</p></section>
+<section class="settings-panel"><div class="setting-row"><div><strong>Distance units</strong><span>Used for map measurements and positioning.</span></div><select @bind="units"><option>Metric (m)</option><option>Imperial (ft)</option></select></div><div class="setting-row"><div><strong>Interface density</strong><span>Choose the amount of information shown on screen.</span></div><select @bind="density"><option>Comfortable</option><option>Compact</option></select></div><div class="settings-saved" role="status">Current selection: @units · @density</div></section>
+@code { private string units = "Metric (m)"; private string density = "Comfortable"; }

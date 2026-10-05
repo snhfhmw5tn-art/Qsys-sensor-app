@@ -1,0 +1,26 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore Qsys.SensorApp.sln
+      - name: Build
+        run: dotnet build Qsys.SensorApp.sln --configuration Release --no-restore
+      - name: Test
+        run: dotnet test Qsys.SensorApp.sln --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"

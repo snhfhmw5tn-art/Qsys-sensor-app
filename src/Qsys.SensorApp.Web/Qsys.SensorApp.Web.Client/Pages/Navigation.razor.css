@@ -6,6 +6,7 @@
 .nav-track { fill: none; stroke: #2982b8; stroke-width: .08; stroke-linecap: round; stroke-linejoin: round; }
 .nav-position { fill: #dc4d45; stroke: white; stroke-width: .06; }
 .nav-distance-marker { fill: #fff; stroke: #156f9d; stroke-width: .045; }
+.nav-distance-label { fill: #152334; font-size: .2px; font-weight: 700; paint-order: stroke; stroke: #fff; stroke-width: .055px; stroke-linejoin: round; }
 .nav-heading { stroke: #dc4d45; stroke-width: .06; stroke-linecap: round; }
 .nav-bearing { stroke: #18a558; stroke-width: .06; stroke-linecap: round; }
 .navigation-map p { margin: .75rem .25rem .25rem; }

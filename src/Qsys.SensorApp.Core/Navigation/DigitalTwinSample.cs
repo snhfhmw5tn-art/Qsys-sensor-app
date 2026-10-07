@@ -6,7 +6,7 @@ using Qsys.SensorApp.Core.Navigation;
 public sealed record DigitalTwinSample(Guid SessionId, DateTimeOffset TimestampUtc, double X, double Y, double Z,
     double? HeadingDegrees, double SpeedMetersPerSecond, int StepCount, double Confidence,
     double PositionUncertaintyMeters, ActivityType Activity, double ActivityConfidence,
-    double? DeviceForwardHeadingDegrees = null);
+    double? DeviceForwardHeadingDegrees = null, double? DeviceScreenOrientationDegrees = null);
 
 /// <summary>One heatmap cell in warehouse-local metre coordinates.</summary>
 public sealed record HeatmapCell(int GridX, int GridY, double CenterX, double CenterY, int SampleCount, double Intensity);

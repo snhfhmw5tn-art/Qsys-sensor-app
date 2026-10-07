@@ -223,6 +223,7 @@ function emit(session) {
         magneticFieldZ: session.latest.magneticFieldMicrotesla?.z ?? null,
         headingDegrees: session.latest.headingDegrees ?? null,
         deviceForwardHeadingDegrees: session.latest.deviceForwardHeadingDegrees ?? null,
+        deviceScreenOrientationDegrees: getScreenOrientationDegrees(),
         pitchDegrees: session.latest.pitchDegrees ?? null,
         rollDegrees: session.latest.rollDegrees ?? null,
         orientationIsAbsolute: session.latest.orientationIsAbsolute ?? false,
@@ -293,6 +294,12 @@ function finite(value) {
 
 function normalize(degrees) {
     return ((degrees % 360) + 360) % 360;
+}
+
+// screen.orientation follows the handset's portrait/landscape rotation: 0° draws the red phone axis vertically, 90° horizontally.
+function getScreenOrientationDegrees() {
+    const angle = Number(window.screen?.orientation?.angle ?? window.orientation ?? 0);
+    return Number.isFinite(angle) ? normalize(angle) : 0;
 }
 
 // Project the device's screen-facing axis onto the horizontal plane. This movement heading compensates for pitch and roll;

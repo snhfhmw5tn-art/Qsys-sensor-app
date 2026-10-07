@@ -19,6 +19,7 @@ public sealed class DeadReckoningEngine
     private DateTimeOffset? _lastStepTimestamp;
     private double? _headingDegrees;
     private double _headingOffsetDegrees;
+    private double _deviceToTravelOffsetDegrees;
     private double _headingQuality;
     private double _stepQuality;
     private double? _referencePressureKilopascals;
@@ -61,6 +62,14 @@ public sealed class DeadReckoningEngine
         _headingDegrees = 0;
         State = State with { HeadingDegrees = 0 };
         return true;
+    }
+
+    /// <summary>Sets the angular correction from the device's forward axis to the user's travel direction.</summary>
+    public void SetDeviceToTravelOffsetDegrees(double offsetDegrees)
+    {
+        if (!double.IsFinite(offsetDegrees)) throw new ArgumentOutOfRangeException(nameof(offsetDegrees));
+        // A sideways-held device needs a fixed yaw correction so step positions follow the user's path, not the device's top edge.
+        _deviceToTravelOffsetDegrees = Normalize(offsetDegrees);
     }
 
     /// <summary>Processes one timestamped measurement and updates the estimated position.</summary>
@@ -128,7 +137,7 @@ public sealed class DeadReckoningEngine
 
         if (reading.HeadingDegrees is { } absoluteHeading && reading.OrientationIsAbsolute)
         {
-            var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees);
+            var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees - _deviceToTravelOffsetDegrees);
             if (_headingDegrees is null) _headingDegrees = relativeHeading;
             // Blend toward the absolute compass heading to reduce sensor jitter without snapping the navigation direction.
             else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));

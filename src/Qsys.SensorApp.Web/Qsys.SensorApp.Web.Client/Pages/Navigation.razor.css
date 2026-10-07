@@ -5,6 +5,7 @@
 .nav-graph line { stroke: #a6b6bf; stroke-width: .08; }
 .nav-track { fill: none; stroke: #2982b8; stroke-width: .08; stroke-linecap: round; stroke-linejoin: round; }
 .nav-position { fill: #dc4d45; stroke: white; stroke-width: .06; }
+.nav-distance-marker { fill: #fff; stroke: #156f9d; stroke-width: .045; }
 .nav-heading { stroke: #dc4d45; stroke-width: .06; stroke-linecap: round; }
 .nav-bearing { stroke: #18a558; stroke-width: .06; stroke-linecap: round; }
 .navigation-map p { margin: .75rem .25rem .25rem; }

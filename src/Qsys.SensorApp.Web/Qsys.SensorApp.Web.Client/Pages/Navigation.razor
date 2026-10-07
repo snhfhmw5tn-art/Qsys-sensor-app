@@ -18,6 +18,7 @@
     <label>Start X (m) <input type="number" step="0.1" @bind="initialX" disabled="@isRunning" /></label>
     <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
     <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
+    <label>Device-to-walk correction (°) <input type="number" min="-180" max="180" step="5" @bind="deviceToTravelOffsetDegrees" disabled="@isRunning" /></label>
     <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
     @if (isRunning)
     {
@@ -27,6 +28,7 @@
     @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
+<p class="small-note">If the device’s top edge points 90° to your right while walking forward, enter +90°; if it points left, enter −90°. Red shows device direction; green and the position track use this correction.</p>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
 
 <section class="twin-controls">
@@ -45,6 +47,7 @@
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
     <div><span class="eyebrow">DEVICE FORWARD · RED</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p><small>Compass direction toward the top of the device</small></div>
     <div><span class="eyebrow">TRAVEL DIRECTION · GREEN</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction derived from the position track</small></div>
+    <div><span class="eyebrow">DRAWN DISTANCE</span><p>@DrawnDistanceMeters.ToString("0.00") m</p><small>Accumulated length of the displayed track</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
     <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@(ReplaySample is { } replay ? replay.Activity : state.Activity.Type) · @ReplayActivityConfidence.ToString("0")%</p></div>
@@ -72,6 +75,13 @@
             }
         }
         @if (viewMode != TwinViewMode.Heatmap) { <path class="nav-track" d="@DisplayedTrackPath()" /> }
+        @if (viewMode != TwinViewMode.Heatmap)
+        {
+            @foreach (var marker in DistanceMarkers())
+            {
+                <circle class="nav-distance-marker" cx="@N(marker.X)" cy="@N(-marker.Y)" r="0.07"><title>Every 0.5 m</title></circle>
+            }
+        }
         <circle class="nav-position" cx="@N(DisplayPosition.X)" cy="@N(-DisplayPosition.Y)" r="0.22" />
         @if (DisplayHeading is { } heading)
         {
@@ -113,6 +123,7 @@
     private double initialX;
     private double initialY;
     private double initialHeading;
+    private double deviceToTravelOffsetDegrees;
     private double stepLength = 0.72;
     private string mapMessage = "Loading saved map…";
     private string? message;
@@ -121,6 +132,10 @@
     private enum TwinViewMode { Live, Heatmap, Replay }
     private const int MaximumHistorySamples = 5000;
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
+    private Vector2[] DisplayedTrackPoints => viewMode == TwinViewMode.Replay && ReplaySample is { } replay
+        ? twinHistory.Take(replayIndex + 1).Where(sample => sample.SessionId == replay.SessionId).Select(sample => new Vector2(sample.X, sample.Y)).ToArray()
+        : track.ToArray();
+    private double DrawnDistanceMeters => GetPathLength(DisplayedTrackPoints);
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? deviceForwardHeading;
     private bool turningWithoutTranslation;
@@ -175,6 +190,38 @@
     private static double? AdjustBearing(double? bearing, double? offset) => bearing is { } value
         ? NormalizeBearing(value - (offset ?? 0))
         : null;
+
+    private static double GetPathLength(IReadOnlyList<Vector2> points)
+    {
+        var length = 0d;
+        for (var index = 1; index < points.Count; index++)
+        {
+            var segmentLength = (points[index] - points[index - 1]).Length;
+            if (segmentLength >= 0.02) length += segmentLength;
+        }
+        return length;
+    }
+
+    private IEnumerable<Vector2> DistanceMarkers()
+    {
+        var points = DisplayedTrackPoints;
+        var distanceAlongPath = 0d;
+        var nextMarkerDistance = 0.5;
+        for (var index = 1; index < points.Length; index++)
+        {
+            var start = points[index - 1];
+            var segment = points[index] - start;
+            var segmentLength = segment.Length;
+            if (segmentLength < 0.02) continue;
+            while (nextMarkerDistance <= distanceAlongPath + segmentLength)
+            {
+                var fraction = (nextMarkerDistance - distanceAlongPath) / segmentLength;
+                yield return start + (segment * fraction);
+                nextMarkerDistance += 0.5;
+            }
+            distanceAlongPath += segmentLength;
+        }
+    }
     private string ReplayTimestamp => ReplaySample is { } sample ? sample.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "No history";
     private string TopActivityInsight
     {
@@ -267,6 +314,7 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
+            engine.SetDeviceToTravelOffsetDegrees(deviceToTravelOffsetDegrees);
             deviceForwardHeading = null;
             turningWithoutTranslation = false;
             redDirectionOffsetDegrees = null;

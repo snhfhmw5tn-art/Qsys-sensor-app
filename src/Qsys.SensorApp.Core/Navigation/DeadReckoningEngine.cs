@@ -17,6 +17,7 @@ public sealed class DeadReckoningEngine
     private readonly string _level;
     private DateTimeOffset? _lastTimestamp;
     private DateTimeOffset? _lastStepTimestamp;
+    private int _confirmedStepCount;
     private double? _headingDegrees;
     private double _headingOffsetDegrees;
     private double _headingQuality;
@@ -77,9 +78,13 @@ public sealed class DeadReckoningEngine
 
         UpdateHeading(reading, elapsedSeconds);
         var step = _stepDetector.Update(reading);
+        UpdateAltitude(reading.PressureKilopascals);
+        var activity = _activityClassifier.Update(reading, step.Detected, _altitudeMeters);
+        var gaitConfirmed = activity.Type is ActivityType.Walking or ActivityType.Running or ActivityType.Stairs;
         var speed = State.SpeedMetersPerSecond;
-        if (step.Detected)
+        if (step.Detected && gaitConfirmed)
         {
+            _confirmedStepCount++;
             _lastStepTimestamp = step.TimestampUtc;
             _stepQuality = step.Confidence;
             if (step.IntervalSeconds > 0)
@@ -93,13 +98,10 @@ public sealed class DeadReckoningEngine
                 }
             }
         }
-        else if (_lastStepTimestamp is not { } lastStep || (reading.TimestampUtc - lastStep).TotalSeconds > 1)
+        else if (!gaitConfirmed || _lastStepTimestamp is not { } lastStep || (reading.TimestampUtc - lastStep).TotalSeconds > 1)
         {
             speed = 0;
         }
-
-        UpdateAltitude(reading.PressureKilopascals);
-        var activity = _activityClassifier.Update(reading, step.Detected, _altitudeMeters);
 
         MapMatchResult? mapMatch = null;
         if (_graph is { Edges.Count: > 0 })
@@ -116,7 +118,7 @@ public sealed class DeadReckoningEngine
         var uncertaintyQuality = 1 / (1 + (_positionFilter.StandardDeviation / 10));
         var confidence = Math.Clamp(sensorQuality * uncertaintyQuality, 0, 1);
         var position = new Vector3(_positionFilter.Position.X, _positionFilter.Position.Y, _altitudeMeters ?? 0);
-        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _stepDetector.StepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position, activity);
+        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _confirmedStepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position, activity);
         return State;
     }
 

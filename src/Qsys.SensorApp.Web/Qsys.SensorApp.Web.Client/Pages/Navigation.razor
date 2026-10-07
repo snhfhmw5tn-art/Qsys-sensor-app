@@ -383,10 +383,25 @@
 
     private string MapViewBox()
     {
-        var points = graph.Nodes.Select(node => node.Position).Concat(track).Concat(twinHistory.Select(sample => new Vector2(sample.X, sample.Y)))
-            .Append(new Vector2(DisplayPosition.X, DisplayPosition.Y)).Concat(heatmapCells.Select(cell => new Vector2(cell.CenterX, cell.CenterY))).ToArray();
-        var minX = points.Min(point => point.X); var maxX = points.Max(point => point.X);
-        var minY = points.Min(point => -point.Y); var maxY = points.Max(point => -point.Y);
+        IEnumerable<Vector2> points = graph.Nodes.Select(node => node.Position);
+        if (viewMode == TwinViewMode.Live)
+        {
+            // A fresh session has a fresh track. Old sessions must not keep the live canvas zoomed out.
+            points = points.Concat(track);
+        }
+        else if (viewMode == TwinViewMode.Heatmap)
+        {
+            points = points.Concat(twinHistory.Select(sample => new Vector2(sample.X, sample.Y)))
+                .Concat(heatmapCells.Select(cell => new Vector2(cell.CenterX, cell.CenterY)));
+        }
+        else if (ReplaySample is { } replay)
+        {
+            points = points.Concat(twinHistory.Take(replayIndex + 1).Where(sample => sample.SessionId == replay.SessionId)
+                .Select(sample => new Vector2(sample.X, sample.Y)));
+        }
+        var visiblePoints = points.Append(new Vector2(DisplayPosition.X, DisplayPosition.Y)).ToArray();
+        var minX = visiblePoints.Min(point => point.X); var maxX = visiblePoints.Max(point => point.X);
+        var minY = visiblePoints.Min(point => -point.Y); var maxY = visiblePoints.Max(point => -point.Y);
         var padding = Math.Max(2, Math.Max(maxX - minX, maxY - minY) * 0.12);
         var width = Math.Max(4, maxX - minX + 2 * padding); var height = Math.Max(4, maxY - minY + 2 * padding);
         return $"{N((minX + maxX - width) / 2)} {N((minY + maxY - height) / 2)} {N(width)} {N(height)}";

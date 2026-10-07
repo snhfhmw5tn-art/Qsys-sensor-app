@@ -120,13 +120,10 @@
 
     private enum TwinViewMode { Live, Heatmap, Replay }
     private const int MaximumHistorySamples = 5000;
-    // Hide only the green indicator during a sharp turn; step detection stays enabled so normal walking cadence is preserved.
-    private const double TravelIndicatorTurnThresholdDegreesPerSecond = 90;
-    private const double TravelIndicatorSettleSeconds = 0.5;
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? deviceForwardHeading;
-    private DateTimeOffset? lastTurningInPlaceAt;
+    private bool turningWithoutTranslation;
     // Each line has its own zero offset so calibrating one reference cannot silently rotate the other.
     private double? redDirectionOffsetDegrees;
     private double? greenDirectionOffsetDegrees;
@@ -134,11 +131,10 @@
     private double? DisplayBearing => HasConfirmedMovement
         ? AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees)
         : null;
-    // Heading changes alone do not prove walking; require cadence, speed and walking activity, and hide green during/after in-place turns.
+    // Heading changes alone do not prove walking; require cadence, speed and walking activity, and hide green when gyro lacks translation evidence.
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
-        : !IsTurnSuppressed && IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
-    private bool IsTurnSuppressed => lastTurningInPlaceAt is { } turnAt && (state.TimestampUtc - turnAt).TotalSeconds <= TravelIndicatorSettleSeconds;
+        : !turningWithoutTranslation && IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -175,15 +171,6 @@
     private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
     private static bool IsMoving(double speed, int stepCount, ActivityType activity) =>
         speed >= 0.15 && stepCount >= 2 && activity is ActivityType.Walking or ActivityType.Running or ActivityType.Stairs;
-
-    private static double? GetVerticalTurnRate(SensorVector3? rotation, SensorVector3? gravity)
-    {
-        if (rotation is not { } angularVelocity) return null;
-        // Without a trustworthy gravity vector, total angular speed is a conservative in-place-turn signal.
-        if (gravity is not { } gravityVector || gravityVector.Magnitude < 6 || gravityVector.Magnitude > 13)
-            return angularVelocity.Magnitude;
-        return ((angularVelocity.X * gravityVector.X) + (angularVelocity.Y * gravityVector.Y) + (angularVelocity.Z * gravityVector.Z)) / gravityVector.Magnitude;
-    }
 
     private static double? AdjustBearing(double? bearing, double? offset) => bearing is { } value
         ? NormalizeBearing(value - (offset ?? 0))
@@ -281,7 +268,7 @@
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
             deviceForwardHeading = null;
-            lastTurningInPlaceAt = null;
+            turningWithoutTranslation = false;
             redDirectionOffsetDegrees = null;
             greenDirectionOffsetDegrees = null;
             hasAltitudeReading = false;
@@ -335,12 +322,12 @@
             var timestamp = DateTimeOffset.FromUnixTimeMilliseconds((long)millis);
             var rotationRate = Vector(sample, "rotationRate");
             var gravity = Vector(sample, "accelerationIncludingGravity");
-            // A sharp in-place turn can transiently fool the motion classifier, so hide the green line briefly without stopping step detection.
-            if (GetVerticalTurnRate(rotationRate, gravity) is { } turnRate && Math.Abs(turnRate) >= TravelIndicatorTurnThresholdDegreesPerSecond)
-                lastTurningInPlaceAt = timestamp;
+            var linearAcceleration = Vector(sample, "acceleration");
             var reading = new SensorReading(timestamp, Number(sample, "samplingIntervalMilliseconds") ?? 0,
-                Vector(sample, "acceleration"), gravity, rotationRate, Vector(sample, "magneticField"),
+                linearAcceleration, gravity, rotationRate, Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
+            // Use the same spatial-motion decision as the step detector, so the green line responds immediately to translation evidence.
+            turningWithoutTranslation = StepDetector.IsTurningWithoutTranslation(reading);
             deviceForwardHeading = Number(sample, "deviceForwardHeadingDegrees");
             state = engine.Process(reading);
             if (reading.PressureKilopascals is > 0)

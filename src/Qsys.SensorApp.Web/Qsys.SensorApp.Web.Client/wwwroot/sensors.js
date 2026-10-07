@@ -1,4 +1,23 @@
 let activeSession;
+const vibrationThresholdsKey = "qsys.sensorapp.vibration-thresholds.v1";
+
+export function loadVibrationThresholds() {
+    try {
+        const serialized = window.localStorage.getItem(vibrationThresholdsKey);
+        return serialized ? JSON.parse(serialized) : null;
+    } catch {
+        return null;
+    }
+}
+
+export function saveVibrationThresholds(thresholds) {
+    try {
+        window.localStorage.setItem(vibrationThresholdsKey, JSON.stringify(thresholds));
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 async function permissionState(name) {
     if (!navigator.permissions?.query) return "Unknown";

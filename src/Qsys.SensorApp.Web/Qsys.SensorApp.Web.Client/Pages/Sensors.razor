@@ -1,5 +1,7 @@
 @page "/sensors"
 @using System.Text.Json
+@using System.Globalization
+@using Qsys.SensorApp.Core.Navigation
 @using Qsys.SensorApp.Core.Sensors
 @implements IAsyncDisposable
 @inject IJSRuntime JS
@@ -44,10 +46,48 @@
         <div class="reading-grid">
             <article><span>Acceleration · m/s²</span><strong>@Vector(latestReading.Acceleration)</strong><small>Including gravity: @Vector(latestReading.AccelerationIncludingGravity)</small></article>
             <article><span>Rotation rate · °/s</span><strong>@Vector(latestReading.RotationRateDegreesPerSecond)</strong><small>Heading: @Scalar(latestReading.HeadingDegrees, "°") · @(latestReading.OrientationIsAbsolute ? "absolute" : "relative / unavailable")</small></article>
+            <article><span>Orientation · live</span><strong>Heading @Scalar(latestReading.HeadingDegrees, "°")</strong><small>Pitch @Scalar(latestReading.PitchDegrees, "°") · Roll @Scalar(latestReading.RollDegrees, "°") · @(latestReading.OrientationIsAbsolute ? "absolute" : "relative")</small></article>
+            <article><span>DeviceMotion · live</span><strong>Linear @Vector(latestReading.Acceleration)</strong><small>Gravity @Vector(latestReading.AccelerationIncludingGravity) · Rotation @Vector(latestReading.RotationRateDegreesPerSecond) °/s</small></article>
             <article><span>Magnetic field · μT</span><strong>@Vector(latestReading.MagneticFieldMicrotesla)</strong><small>Pitch @Scalar(latestReading.PitchDegrees, "°") · Roll @Scalar(latestReading.RollDegrees, "°")</small></article>
             <article><span>Barometer · kPa</span><strong>@Scalar(latestReading.PressureKilopascals, " kPa")</strong><small>Device timestamp: @latestReading.TimestampUtc.ToLocalTime().ToString("HH:mm:ss.fff")</small></article>
         </div>
     }
+</section>
+
+<section class="sensor-diagnostics vibration-panel">
+    <div class="sensor-section-heading"><div><p class="eyebrow">LIVE VIBRATION · EXPERIMENTAL</p><h2>Dominant frequency over time</h2></div><span class="vibration-class @ActivityClassCss">@CurrentVibrationClass · @Scalar(currentVibrationFrequencyHz, " Hz")</span></div>
+    <p class="small-note">Frequency is estimated from a rolling 4-second accelerometer window. Use 20 or 25 Hz sampling to inspect truck vibration; lower rates can miss higher frequencies. Thresholds below are editable starting points, not universal device-independent limits. @VibrationSourceNote</p>
+    <div class="vibration-chart-wrap">
+        <svg class="vibration-chart" viewBox="0 0 820 330" role="img" aria-label="Live estimated vibration frequency in hertz over time">
+            @if (thresholds.WalkingMinHz < chartMaximumHz) { <rect class="vibration-band band-walk" x="70" y="@YForFrequency(Math.Min(thresholds.WalkingMaxHz, chartMaximumHz))" width="730" height="@BandHeight(thresholds.WalkingMinHz, Math.Min(thresholds.WalkingMaxHz, chartMaximumHz))" /> }
+            @if (thresholds.RunningMinHz < chartMaximumHz) { <rect class="vibration-band band-run" x="70" y="@YForFrequency(Math.Min(thresholds.RunningMaxHz, chartMaximumHz))" width="730" height="@BandHeight(thresholds.RunningMinHz, Math.Min(thresholds.RunningMaxHz, chartMaximumHz))" /> }
+            @if (thresholds.TruckMinHz < chartMaximumHz) { <rect class="vibration-band band-truck" x="70" y="@YForFrequency(Math.Min(thresholds.TruckMaxHz, chartMaximumHz))" width="730" height="@BandHeight(thresholds.TruckMinHz, Math.Min(thresholds.TruckMaxHz, chartMaximumHz))" /> }
+            @for (var hz = 0; hz <= (int)chartMaximumHz; hz += 2)
+            {
+                <line class="chart-gridline" x1="70" x2="800" y1="@YForFrequency(hz)" y2="@YForFrequency(hz)" />
+                <foreignObject x="14" y="@AxisLabelY(hz)" width="48" height="18"><div xmlns="http://www.w3.org/1999/xhtml" class="chart-axis-label">@hz</div></foreignObject>
+            }
+            <line class="chart-axis" x1="70" y1="30" x2="70" y2="280" />
+            <line class="chart-axis" x1="70" y1="280" x2="800" y2="280" />
+            <path class="vibration-frequency-line" d="@VibrationFrequencyPath()" />
+        </svg>
+    </div>
+    <div class="vibration-chart-legend"><span>Y: frequency 0–@chartMaximumHz.ToString("0.0") Hz</span><span>X: last @VibrationHistorySeconds seconds</span><span class="legend-walk">Walk @thresholds.WalkingMinHz–@thresholds.WalkingMaxHz Hz</span><span class="legend-run">Run @thresholds.RunningMinHz–@thresholds.RunningMaxHz Hz</span><span class="legend-truck">Truck @thresholds.TruckMinHz–@thresholds.TruckMaxHz Hz</span></div>
+    <div class="vibration-current-values">
+        <span>Vibration RMS <strong>@Scalar(currentVibrationRms, " m/s²")</strong></span>
+        <span>Estimated sample rate <strong>@(observedRateHz?.ToString("0.0", CultureInfo.InvariantCulture) ?? "—") Hz</strong></span>
+        <span>Frequency window <strong>4 s</strong></span>
+        <span>Standing threshold <strong>≤ @thresholds.StandingRmsMaxMetersPerSecondSquared.ToString("0.00") m/s² RMS</strong></span>
+    </div>
+    <div class="vibration-thresholds">
+        <div><label>Still RMS max <input type="number" min="0.01" max="5" step="0.01" @bind="thresholds.StandingRmsMaxMetersPerSecondSquared" @bind:after="SaveThresholds" /> m/s²</label></div>
+        <div><label>Motion RMS min <input type="number" min="0.01" max="5" step="0.01" @bind="thresholds.ActiveRmsMinMetersPerSecondSquared" @bind:after="SaveThresholds" /> m/s²</label></div>
+        <div class="threshold-group band-walk"><strong>Walking · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.WalkingMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.WalkingMaxHz" @bind:after="SaveThresholds" /></label></div>
+        <div class="threshold-group band-run"><strong>Running · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.RunningMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.RunningMaxHz" @bind:after="SaveThresholds" /></label></div>
+        <div class="threshold-group band-truck"><strong>Truck vibration · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.TruckMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.TruckMaxHz" @bind:after="SaveThresholds" /></label></div>
+        <button class="quiet-button" @onclick="ResetThresholds">Restore starting values</button>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(thresholdMessage)) { <p class="sensor-message" role="status">@thresholdMessage</p> }
 </section>
 
 <section class="sensor-diagnostics">
@@ -79,12 +119,21 @@
 
 @code {
     private const int RecentReadingLimit = 300;
+    private const int VibrationWindowSeconds = 4;
+    private const int VibrationHistorySeconds = 20;
     private IJSObjectReference? drawingModule;
     private DotNetObjectReference<Sensors>? dotnetReference;
     private readonly List<SensorCapability> capabilities = [];
     private readonly List<SensorDiagnostic> sensorErrors = [];
     private readonly Queue<SensorReading> recentReadings = new();
+    private readonly List<VibrationPoint> vibrationHistory = [];
     private SensorReading? latestReading;
+    private VibrationThresholdSettings thresholds = new();
+    private double? currentVibrationFrequencyHz;
+    private double? currentVibrationRms;
+    private double chartMaximumHz = 12.5;
+    private DateTimeOffset? lastVibrationEstimate;
+    private string? thresholdMessage;
     private int requestedRateHz = 10;
     private int receivedSamples;
     private int droppedSamples;
@@ -98,6 +147,10 @@
     private string SamplingBadge => !isSampling ? "Idle" : receivedSamples == 0 ? "Waiting" : "Receiving";
 
     private sealed record SensorDiagnostic(string Kind, string Message);
+    private sealed record VibrationPoint(DateTimeOffset TimestampUtc, double FrequencyHz);
+    private string CurrentVibrationClass => ClassifyVibration(currentVibrationFrequencyHz, currentVibrationRms, thresholds);
+    private string ActivityClassCss => CurrentVibrationClass switch { "Standing" => "standing", "Walking-like" => "walking", "Running-like" => "running", "Truck-like vibration" => "truck", _ => "unknown" };
+    private string VibrationSourceNote => latestReading?.Acceleration is null ? "Using acceleration including gravity; phone tilt can affect the estimate." : "Using gravity-compensated linear acceleration.";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -105,6 +158,20 @@
         try
         {
             drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js");
+            var savedThresholds = await drawingModule.InvokeAsync<JsonElement>("loadVibrationThresholds");
+            if (savedThresholds.ValueKind == JsonValueKind.Object)
+            {
+                try
+                {
+                    var loaded = JsonSerializer.Deserialize<VibrationThresholdSettings>(savedThresholds.GetRawText(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    loaded?.Validate();
+                    if (loaded is not null) thresholds = loaded;
+                }
+                catch (Exception exception) when (exception is JsonException or ArgumentException)
+                {
+                    thresholdMessage = "Saved thresholds were invalid; starting values are active.";
+                }
+            }
             await RefreshCapabilities();
         }
         catch (JSException exception) { message = $"Could not initialize browser sensors: {exception.Message}"; }
@@ -136,6 +203,7 @@
     {
         if (drawingModule is null) return;
         sensorErrors.Clear(); receivedSamples = 0; droppedSamples = 0; observedRateHz = null; previousTimestampMilliseconds = null;
+        recentReadings.Clear(); vibrationHistory.Clear(); currentVibrationFrequencyHz = null; currentVibrationRms = null; lastVibrationEstimate = null;
         dotnetReference?.Dispose();
         dotnetReference = DotNetObjectReference.Create(this);
         try
@@ -191,6 +259,7 @@
             latestReading = reading;
             recentReadings.Enqueue(reading);
             while (recentReadings.Count > RecentReadingLimit) recentReadings.Dequeue();
+            UpdateVibrationEstimate(reading);
             if ((DateTime.UtcNow - lastUiUpdateUtc).TotalMilliseconds >= 75)
             {
                 lastUiUpdateUtc = DateTime.UtcNow;
@@ -213,6 +282,102 @@
         sensorErrors.Add(new SensorDiagnostic(kind, text));
         if (sensorErrors.Count > 50) sensorErrors.RemoveAt(0);
         await InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateVibrationEstimate(SensorReading reading)
+    {
+        if (lastVibrationEstimate is { } previousEstimate && (reading.TimestampUtc - previousEstimate).TotalMilliseconds < 200) return;
+        lastVibrationEstimate = reading.TimestampUtc;
+        var windowStart = reading.TimestampUtc.AddSeconds(-VibrationWindowSeconds);
+        var window = recentReadings.Where(item => item.TimestampUtc >= windowStart)
+            .Select(item => item.Acceleration ?? item.AccelerationIncludingGravity)
+            .Where(vector => vector is not null).Select(vector => vector!.Value).ToArray();
+        if (window.Length < 12) return;
+
+        var durationSeconds = (reading.TimestampUtc - recentReadings.First(item => item.TimestampUtc >= windowStart).TimestampUtc).TotalSeconds;
+        if (durationSeconds < 1) return;
+        var sampleRate = (window.Length - 1) / durationSeconds;
+        chartMaximumHz = Math.Clamp(sampleRate / 2, 0.5, 12.5);
+        var magnitudes = window.Select(vector => vector.Magnitude).ToArray();
+        var meanMagnitude = magnitudes.Average();
+        currentVibrationRms = Math.Sqrt(magnitudes.Average(value => Math.Pow(value - meanMagnitude, 2)));
+        currentVibrationFrequencyHz = EstimateDominantFrequency(window, sampleRate, chartMaximumHz);
+        if (currentVibrationFrequencyHz is { } frequency)
+        {
+            vibrationHistory.Add(new VibrationPoint(reading.TimestampUtc, frequency));
+            vibrationHistory.RemoveAll(point => (reading.TimestampUtc - point.TimestampUtc).TotalSeconds > VibrationHistorySeconds);
+        }
+    }
+
+    private static double? EstimateDominantFrequency(IReadOnlyList<SensorVector3> samples, double sampleRate, double maximumFrequency)
+    {
+        if (samples.Count < 24 || sampleRate < 4) return null;
+        var meanX = samples.Average(sample => sample.X); var meanY = samples.Average(sample => sample.Y); var meanZ = samples.Average(sample => sample.Z);
+        var centered = samples.Select(sample => new SensorVector3(sample.X - meanX, sample.Y - meanY, sample.Z - meanZ)).ToArray();
+        var firstLag = Math.Max(1, (int)Math.Floor(sampleRate / maximumFrequency));
+        var finalLag = Math.Min(centered.Length / 2, (int)Math.Ceiling(sampleRate / 0.5));
+        var bestCorrelation = 0d; var bestLag = 0;
+        for (var lag = firstLag; lag <= finalLag; lag++)
+        {
+            var covariance = 0d; var firstEnergy = 0d; var secondEnergy = 0d;
+            for (var index = 0; index < centered.Length - lag; index++)
+            {
+                var first = centered[index]; var second = centered[index + lag];
+                covariance += (first.X * second.X) + (first.Y * second.Y) + (first.Z * second.Z);
+                firstEnergy += first.Magnitude * first.Magnitude; secondEnergy += second.Magnitude * second.Magnitude;
+            }
+            var denominator = Math.Sqrt(firstEnergy * secondEnergy);
+            var correlation = denominator > 0 ? covariance / denominator : 0;
+            if (correlation > bestCorrelation) { bestCorrelation = correlation; bestLag = lag; }
+        }
+        return bestCorrelation < 0.2 || bestLag == 0 ? null : sampleRate / bestLag;
+    }
+
+    private static string ClassifyVibration(double? frequencyHz, double? rms, VibrationThresholdSettings settings)
+    {
+        if (rms is null) return "Waiting for signal";
+        if (rms <= settings.StandingRmsMaxMetersPerSecondSquared) return "Standing";
+        if (rms < settings.ActiveRmsMinMetersPerSecondSquared || frequencyHz is null) return "Unclassified motion";
+        if (frequencyHz >= settings.WalkingMinHz && frequencyHz < settings.WalkingMaxHz) return "Walking-like";
+        if (frequencyHz >= settings.RunningMinHz && frequencyHz < settings.RunningMaxHz) return "Running-like";
+        if (frequencyHz >= settings.TruckMinHz && frequencyHz <= settings.TruckMaxHz) return "Truck-like vibration";
+        return "Unclassified motion";
+    }
+
+    private string VibrationFrequencyPath()
+    {
+        if (vibrationHistory.Count == 0) return string.Empty;
+        var now = latestReading?.TimestampUtc ?? DateTimeOffset.UtcNow;
+        return string.Join(" ", vibrationHistory.Select((point, index) => $"{(index == 0 ? "M" : "L")}{XForTime(point.TimestampUtc, now)},{YForFrequency(point.FrequencyHz)}"));
+    }
+
+    private string XForTime(DateTimeOffset timestamp, DateTimeOffset now)
+    {
+        var elapsed = Math.Clamp((timestamp - now).TotalSeconds, -VibrationHistorySeconds, 0);
+        return F(800 + (elapsed / VibrationHistorySeconds * 730));
+    }
+
+    private string YForFrequency(double frequency) => F(280 - (Math.Clamp(frequency, 0, chartMaximumHz) / chartMaximumHz * 250));
+    private string AxisLabelY(int frequency) => F(280 - (frequency / chartMaximumHz * 250) - 8);
+    private string BandHeight(double minimum, double maximum) => F(Math.Max(0, (Math.Min(maximum, chartMaximumHz) - Math.Min(minimum, chartMaximumHz)) / chartMaximumHz * 250));
+    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private async Task SaveThresholds()
+    {
+        try
+        {
+            thresholds.Validate();
+            thresholdMessage = drawingModule is null || !await drawingModule.InvokeAsync<bool>("saveVibrationThresholds", thresholds)
+                ? "Values apply in this view but could not be saved in this browser."
+                : "Thresholds saved in this browser and applied to the live vibration label.";
+        }
+        catch (ArgumentException exception) { thresholdMessage = exception.Message; }
+    }
+
+    private async Task ResetThresholds()
+    {
+        thresholds = new VibrationThresholdSettings();
+        await SaveThresholds();
     }
 
     private static SensorVector3? Vector(JsonElement sample, string prefix)

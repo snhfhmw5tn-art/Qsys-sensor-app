@@ -22,6 +22,36 @@
 .reading-grid article>span,.diagnostic-grid span { color: #8f9db2; font-size: .75rem; }
 .reading-grid article strong { color: #dfe6f0; font-size: .93rem; font-variant-numeric: tabular-nums; }
 .reading-grid article small { color: #9ca8bc; font-size: .72rem; }
+.vibration-chart-wrap { overflow-x: auto; border: 1px solid #28354a; border-radius: 8px; background: #121a27; }
+.vibration-chart { display: block; width: 100%; min-width: 620px; height: auto; }
+.vibration-band { opacity: .12; }
+.band-walk { --band-color: #45c7a5; }
+.band-run { --band-color: #f1be58; }
+.band-truck { --band-color: #8b83f6; }
+.vibration-band.band-walk { fill: #45c7a5; }
+.vibration-band.band-run { fill: #f1be58; }
+.vibration-band.band-truck { fill: #8b83f6; }
+.chart-gridline { stroke: #28354a; stroke-width: 1; }
+.chart-axis { stroke: #8090a8; stroke-width: 1.5; }
+.chart-axis-label { color: #aab6c9; font-size: 12px; text-align: right; }
+.vibration-chart-legend { display: flex; flex-wrap: wrap; gap: .45rem 1rem; padding: .65rem .2rem; color: #aab6c9; font-size: .74rem; }
+.vibration-chart-legend .legend-walk { color: #45c7a5; }
+.vibration-chart-legend .legend-run { color: #f1be58; }
+.vibration-chart-legend .legend-truck { color: #a8a1ff; }
+.vibration-frequency-line { fill: none; stroke: #43d7cf; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.vibration-class { padding: .45rem .7rem; border: 1px solid #354258; border-radius: 999px; color: #cbd5e3; font-size: .78rem; white-space: nowrap; }
+.vibration-class.standing { color: #aeb9c9; border-color: #647188; }
+.vibration-class.walking { color: #72e0bf; border-color: #328e78; }
+.vibration-class.running { color: #f4ce78; border-color: #a57a2c; }
+.vibration-class.truck { color: #b7b0ff; border-color: #655fbd; }
+.vibration-current-values { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; margin-block: .85rem; color: #91a0b4; font-size: .76rem; }
+.vibration-current-values strong { margin-left: .25rem; color: #e9edf6; font-variant-numeric: tabular-nums; }
+.vibration-thresholds { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: .7rem; align-items: end; }
+.vibration-thresholds>div,.threshold-group { display: grid; gap: .5rem; padding: .7rem; color: #b4bfd0; background: #121a27; border: 1px solid #28354a; border-radius: 8px; font-size: .75rem; }
+.vibration-thresholds label { display: flex; align-items: center; gap: .4rem; }
+.vibration-thresholds input { width: 75px; padding: .3rem; color: #e9edf6; background: #1b2635; border: 1px solid #354258; border-radius: 5px; font-variant-numeric: tabular-nums; }
+.threshold-group strong { color: var(--band-color); }
+.vibration-thresholds .quiet-button { justify-self: start; }
 .diagnostic-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .65rem; }
 .diagnostic-grid strong { color: #cbd5e3; font-size: .88rem; font-variant-numeric: tabular-nums; }
 .sensor-error-list { margin: .85rem 0 0; padding: .75rem .75rem .75rem 2rem; color: #f0bd84; background: #2b211a; border: 1px solid #5c4330; border-radius: 6px; font-size: .78rem; }

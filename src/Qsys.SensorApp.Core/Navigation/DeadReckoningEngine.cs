@@ -143,9 +143,10 @@ public sealed class DeadReckoningEngine
 
     private static double? GetVerticalHeadingRate(SensorReading reading)
     {
-        if (reading.RotationRateDegreesPerSecond is not { } rate) return null;
-        if (reading.AccelerationIncludingGravity is not { } gravity || gravity.Magnitude < 1) return rate.Z;
+        if (reading.RotationRateDegreesPerSecond is not { } rate || reading.AccelerationIncludingGravity is not { } gravity) return null;
+        if (gravity.Magnitude < 6 || gravity.Magnitude > 13) return null;
 
+        // Without a reliable gravity vector, device Z is not a safe proxy for world vertical.
         return ((rate.X * gravity.X) + (rate.Y * gravity.Y) + (rate.Z * gravity.Z)) / gravity.Magnitude;
     }
 

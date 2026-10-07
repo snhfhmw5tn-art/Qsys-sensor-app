@@ -19,6 +19,7 @@
     <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
     <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
     <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
+    @if (isRunning) { <button class="quiet-button" @onclick="ResetHeadingToForward" disabled="@(state.HeadingDegrees is null || viewMode != TwinViewMode.Live)">Set current direction as 0° / forward</button> }
     @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
@@ -39,6 +40,7 @@
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
     <div><span class="eyebrow">HEADING</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p></div>
+    <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
     <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@(ReplaySample is { } replay ? replay.Activity : state.Activity.Type) · @ReplayActivityConfidence.ToString("0")%</p></div>
     <div><span class="eyebrow">CONFIDENCE · UNCERTAINTY</span><p>@((ReplaySample?.Confidence ?? state.Confidence).ToString("P0")) · ±@((ReplaySample?.PositionUncertaintyMeters ?? state.PositionUncertaintyMeters).ToString("0.00")) m</p></div>
@@ -94,6 +96,9 @@
     private bool isReplayPlaying;
     private bool isDisposed;
     private bool isRunning;
+    private bool hasAltitudeReading;
+    private double minimumElevation;
+    private double maximumElevation;
     private double initialX;
     private double initialY;
     private double initialHeading;
@@ -107,6 +112,12 @@
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? DisplayHeading => ReplaySample is { } sample ? sample.HeadingDegrees : state.HeadingDegrees;
+    private string ElevationDisplay => ReplaySample is { } sample
+        ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
+        : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
+    private string ElevationDetail => ReplaySample is not null
+        ? "Relative to the session’s first barometer reading"
+        : hasAltitudeReading ? $"Session range: {minimumElevation:0.00} to {maximumElevation:0.00} m" : "Requires a device barometer; 0.00 m is not assumed when unavailable.";
     private double ReplayActivityConfidence => (ReplaySample?.ActivityConfidence ?? state.Activity.Confidence) * 100;
     private string ReplayTimestamp => ReplaySample is { } sample ? sample.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "No history";
     private string TopActivityInsight
@@ -173,6 +184,8 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
+            hasAltitudeReading = false;
+            minimumElevation = maximumElevation = 0;
             state = engine.State;
             viewMode = TwinViewMode.Live;
             currentSessionId = Guid.NewGuid();
@@ -186,6 +199,15 @@
         catch (Exception exception) when (exception is JSException or ArgumentException)
         {
             isRunning = false; message = exception.Message;
+        }
+    }
+
+    private void ResetHeadingToForward()
+    {
+        if (engine?.ResetHeadingToForward() == true)
+        {
+            state = engine.State;
+            message = "Current direction is now 0° (local forward/map north). Position was kept unchanged; calibration applies to future movement.";
         }
     }
 
@@ -206,6 +228,12 @@
                 Vector(sample, "acceleration"), Vector(sample, "accelerationIncludingGravity"), Vector(sample, "rotationRate"), Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
             state = engine.Process(reading);
+            if (reading.PressureKilopascals is > 0)
+            {
+                hasAltitudeReading = true;
+                minimumElevation = Math.Min(minimumElevation, state.PositionMeters.Z);
+                maximumElevation = Math.Max(maximumElevation, state.PositionMeters.Z);
+            }
             track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
             if (track.Count > 600) track.RemoveAt(0);
             if (lastHistoryCapture is null || (state.TimestampUtc - lastHistoryCapture.Value).TotalSeconds >= 1)

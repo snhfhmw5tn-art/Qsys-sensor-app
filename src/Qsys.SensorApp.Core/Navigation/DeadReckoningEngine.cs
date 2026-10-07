@@ -18,6 +18,7 @@ public sealed class DeadReckoningEngine
     private DateTimeOffset? _lastTimestamp;
     private DateTimeOffset? _lastStepTimestamp;
     private double? _headingDegrees;
+    private double _headingOffsetDegrees;
     private double _headingQuality;
     private double _stepQuality;
     private double? _referencePressureKilopascals;
@@ -50,6 +51,16 @@ public sealed class DeadReckoningEngine
 
     /// <summary>Gets the latest navigation estimate.</summary>
     public NavigationState State { get; private set; }
+
+    /// <summary>Sets the current direction as the local forward direction without changing the current position.</summary>
+    public bool ResetHeadingToForward()
+    {
+        if (_headingDegrees is not { } currentHeading) return false;
+        _headingOffsetDegrees = Normalize(_headingOffsetDegrees + currentHeading);
+        _headingDegrees = 0;
+        State = State with { HeadingDegrees = 0 };
+        return true;
+    }
 
     /// <summary>Processes one timestamped measurement and updates the estimated position.</summary>
     public NavigationState Process(SensorReading reading)
@@ -115,8 +126,9 @@ public sealed class DeadReckoningEngine
 
         if (reading.HeadingDegrees is { } absoluteHeading && reading.OrientationIsAbsolute)
         {
-            if (_headingDegrees is null) _headingDegrees = absoluteHeading;
-            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, absoluteHeading) * 0.25));
+            var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees);
+            if (_headingDegrees is null) _headingDegrees = relativeHeading;
+            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
             _headingQuality = 1;
         }
         else if (reading.RotationRateDegreesPerSecond is not null)

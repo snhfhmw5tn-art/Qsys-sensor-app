@@ -44,12 +44,14 @@
 .vibration-class.walking { color: #72e0bf; border-color: #328e78; }
 .vibration-class.running { color: #f4ce78; border-color: #a57a2c; }
 .vibration-class.truck { color: #b7b0ff; border-color: #655fbd; }
+.vibration-class.jitter { color: #f4bd78; border-color: #9a6430; }
 .vibration-current-values { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; margin-block: .85rem; color: #91a0b4; font-size: .76rem; }
 .vibration-current-values strong { margin-left: .25rem; color: #e9edf6; font-variant-numeric: tabular-nums; }
 .vibration-thresholds { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: .7rem; align-items: end; }
 .vibration-thresholds>div,.threshold-group { display: grid; gap: .5rem; padding: .7rem; color: #b4bfd0; background: #121a27; border: 1px solid #28354a; border-radius: 8px; font-size: .75rem; }
 .vibration-thresholds label { display: flex; align-items: center; gap: .4rem; }
 .vibration-thresholds input { width: 75px; padding: .3rem; color: #e9edf6; background: #1b2635; border: 1px solid #354258; border-radius: 5px; font-variant-numeric: tabular-nums; }
+.vibration-thresholds input[type=range] { width: 100%; accent-color: #43d7cf; }
 .threshold-group strong { color: var(--band-color); }
 .vibration-thresholds .quiet-button { justify-self: start; }
 .diagnostic-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .65rem; }

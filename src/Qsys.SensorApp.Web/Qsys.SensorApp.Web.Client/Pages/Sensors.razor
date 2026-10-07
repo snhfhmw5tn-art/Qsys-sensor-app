@@ -56,7 +56,7 @@
 
 <section class="sensor-diagnostics vibration-panel">
     <div class="sensor-section-heading"><div><p class="eyebrow">LIVE VIBRATION · EXPERIMENTAL</p><h2>Dominant frequency over time</h2></div><span class="vibration-class @ActivityClassCss">@CurrentVibrationClass · @Scalar(currentVibrationFrequencyHz, " Hz")</span></div>
-    <p class="small-note">Frequency is estimated from a rolling 4-second accelerometer window. A high frequency alone never marks walking, running or truck: the vibration RMS must also exceed the adjustable movement floor. Values between the stillness ceiling and movement floor are shown as unclassified jitter. Use 20 or 25 Hz sampling to inspect truck vibration; lower rates can miss higher frequencies. @VibrationSourceNote</p>
+    <p class="small-note">Frequency is estimated from a rolling @thresholds.EstimationWindowSeconds-second window. A high frequency alone never marks walking, running or truck: vibration RMS must also exceed the adjustable movement floor. Signals below that floor, or without a stable frequency, appear as 0 Hz. Shorter windows react faster; longer windows give a steadier estimate. Use 20 or 25 Hz sampling to inspect truck vibration. @VibrationSourceNote</p>
     <div class="vibration-chart-wrap">
         <svg class="vibration-chart" viewBox="0 0 820 330" role="img" aria-label="Live estimated vibration frequency in hertz over time">
             @if (thresholds.WalkingMinHz < chartMaximumHz) { <rect class="vibration-band band-walk" x="70" y="@YForFrequency(Math.Min(thresholds.WalkingMaxHz, chartMaximumHz))" width="730" height="@BandHeight(thresholds.WalkingMinHz, Math.Min(thresholds.WalkingMaxHz, chartMaximumHz))" /> }
@@ -76,12 +76,13 @@
     <div class="vibration-current-values">
         <span>Vibration RMS <strong>@Scalar(currentVibrationRms, " m/s²")</strong></span>
         <span>Estimated sample rate <strong>@(observedRateHz?.ToString("0.0", CultureInfo.InvariantCulture) ?? "—") Hz</strong></span>
-        <span>Frequency window <strong>4 s</strong></span>
+        <span>Frequency window <strong>@thresholds.EstimationWindowSeconds s</strong></span>
         <span>Standing threshold <strong>≤ @thresholds.StandingRmsMaxMetersPerSecondSquared.ToString("0.00") m/s² RMS</strong></span>
     </div>
     <div class="vibration-thresholds">
         <div><label>Still / jitter RMS ceiling <input type="number" min="0.01" max="5" step="0.01" @bind="thresholds.StandingRmsMaxMetersPerSecondSquared" @bind:after="SaveThresholds" /> m/s²</label></div>
         <div><label>Minimum shake level for motion <input type="number" min="0.01" max="5" step="0.01" @bind="thresholds.ActiveRmsMinMetersPerSecondSquared" @bind:after="SaveThresholds" /> m/s²</label></div>
+        <div><label>Rolling estimate window <strong>@thresholds.EstimationWindowSeconds s</strong><input type="range" min="1" max="10" step="1" @bind="thresholds.EstimationWindowSeconds" @bind:after="SaveThresholds" /><small>Longer is steadier; shorter reacts faster.</small></label></div>
         <div class="threshold-group band-walk"><strong>Walking · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.WalkingMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.WalkingMaxHz" @bind:after="SaveThresholds" /></label></div>
         <div class="threshold-group band-run"><strong>Running · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.RunningMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.RunningMaxHz" @bind:after="SaveThresholds" /></label></div>
         <div class="threshold-group band-truck"><strong>Truck vibration · Hz</strong><label>Min <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.TruckMinHz" @bind:after="SaveThresholds" /></label><label>Max <input type="number" min="0.1" max="12.5" step="0.1" @bind="thresholds.TruckMaxHz" @bind:after="SaveThresholds" /></label></div>
@@ -119,7 +120,6 @@
 
 @code {
     private const int RecentReadingLimit = 300;
-    private const int VibrationWindowSeconds = 4;
     private const int VibrationHistorySeconds = 20;
     private IJSObjectReference? drawingModule;
     private DotNetObjectReference<Sensors>? dotnetReference;
@@ -149,7 +149,7 @@
     private sealed record SensorDiagnostic(string Kind, string Message);
     private sealed record VibrationPoint(DateTimeOffset TimestampUtc, double FrequencyHz);
     private string CurrentVibrationClass => ClassifyVibration(currentVibrationFrequencyHz, currentVibrationRms, thresholds);
-    private string ActivityClassCss => CurrentVibrationClass switch { "Standing" => "standing", "Walking-like" => "walking", "Running-like" => "running", "Truck-like vibration" => "truck", _ => "unknown" };
+    private string ActivityClassCss => CurrentVibrationClass switch { "Standing" => "standing", "Walking-like" => "walking", "Running-like" => "running", "Truck-like vibration" => "truck", "Jitter filtered" => "jitter", _ => "unknown" };
     private string VibrationSourceNote => latestReading?.Acceleration is null ? "Using acceleration including gravity; phone tilt can affect the estimate." : "Using gravity-compensated linear acceleration.";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -288,30 +288,41 @@
     {
         if (lastVibrationEstimate is { } previousEstimate && (reading.TimestampUtc - previousEstimate).TotalMilliseconds < 200) return;
         lastVibrationEstimate = reading.TimestampUtc;
-        var windowStart = reading.TimestampUtc.AddSeconds(-VibrationWindowSeconds);
+        var windowStart = reading.TimestampUtc.AddSeconds(-thresholds.EstimationWindowSeconds);
         var window = recentReadings.Where(item => item.TimestampUtc >= windowStart)
             .Select(item => item.Acceleration ?? item.AccelerationIncludingGravity)
             .Where(vector => vector is not null).Select(vector => vector!.Value).ToArray();
-        if (window.Length < 12) return;
-
-        var durationSeconds = (reading.TimestampUtc - recentReadings.First(item => item.TimestampUtc >= windowStart).TimestampUtc).TotalSeconds;
-        if (durationSeconds < 1) return;
-        var sampleRate = (window.Length - 1) / durationSeconds;
-        chartMaximumHz = Math.Clamp(sampleRate / 2, 0.5, 12.5);
-        var magnitudes = window.Select(vector => vector.Magnitude).ToArray();
-        var meanMagnitude = magnitudes.Average();
-        currentVibrationRms = Math.Sqrt(magnitudes.Average(value => Math.Pow(value - meanMagnitude, 2)));
-        currentVibrationFrequencyHz = EstimateDominantFrequency(window, sampleRate, chartMaximumHz);
-        if (currentVibrationFrequencyHz is { } frequency)
+        double? estimatedFrequency = null;
+        if (window.Length >= 2)
         {
-            vibrationHistory.Add(new VibrationPoint(reading.TimestampUtc, frequency));
-            vibrationHistory.RemoveAll(point => (reading.TimestampUtc - point.TimestampUtc).TotalSeconds > VibrationHistorySeconds);
+            var firstWindowSample = recentReadings.First(item => item.TimestampUtc >= windowStart);
+            var durationSeconds = (reading.TimestampUtc - firstWindowSample.TimestampUtc).TotalSeconds;
+            var magnitudes = window.Select(vector => vector.Magnitude).ToArray();
+            var meanMagnitude = magnitudes.Average();
+            currentVibrationRms = Math.Sqrt(magnitudes.Average(value => Math.Pow(value - meanMagnitude, 2)));
+            if (durationSeconds > 0)
+            {
+                var sampleRate = (window.Length - 1) / durationSeconds;
+                chartMaximumHz = Math.Clamp(sampleRate / 2, 0.5, 12.5);
+                estimatedFrequency = EstimateDominantFrequency(window, sampleRate, chartMaximumHz);
+            }
         }
+        else
+        {
+            currentVibrationRms = null;
+        }
+
+        // The amplitude floor is the jitter filter: a narrow high-frequency peak below it plots as zero, not as motion.
+        currentVibrationFrequencyHz = estimatedFrequency is { } frequency && currentVibrationRms >= thresholds.ActiveRmsMinMetersPerSecondSquared
+            ? frequency
+            : 0;
+        vibrationHistory.Add(new VibrationPoint(reading.TimestampUtc, currentVibrationFrequencyHz.Value));
+        vibrationHistory.RemoveAll(point => (reading.TimestampUtc - point.TimestampUtc).TotalSeconds > VibrationHistorySeconds);
     }
 
     private static double? EstimateDominantFrequency(IReadOnlyList<SensorVector3> samples, double sampleRate, double maximumFrequency)
     {
-        if (samples.Count < 24 || sampleRate < 4) return null;
+        if (samples.Count < 8 || sampleRate < 4) return null;
         var meanX = samples.Average(sample => sample.X); var meanY = samples.Average(sample => sample.Y); var meanZ = samples.Average(sample => sample.Z);
         var centered = samples.Select(sample => new SensorVector3(sample.X - meanX, sample.Y - meanY, sample.Z - meanZ)).ToArray();
         var firstLag = Math.Max(1, (int)Math.Floor(sampleRate / maximumFrequency));
@@ -337,7 +348,8 @@
     {
         if (rms is null) return "Waiting for signal";
         if (rms <= settings.StandingRmsMaxMetersPerSecondSquared) return "Standing";
-        if (rms < settings.ActiveRmsMinMetersPerSecondSquared || frequencyHz is null) return "Unclassified motion";
+        if (rms < settings.ActiveRmsMinMetersPerSecondSquared) return "Jitter filtered";
+        if (frequencyHz is null or <= 0) return "Unclassified motion";
         if (frequencyHz >= settings.WalkingMinHz && frequencyHz < settings.WalkingMaxHz) return "Walking-like";
         if (frequencyHz >= settings.RunningMinHz && frequencyHz < settings.RunningMaxHz) return "Running-like";
         if (frequencyHz >= settings.TruckMinHz && frequencyHz <= settings.TruckMaxHz) return "Truck-like vibration";

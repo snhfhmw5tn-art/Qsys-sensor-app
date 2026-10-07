@@ -19,6 +19,8 @@ public sealed class VibrationThresholdSettings
     public double TruckMinHz { get; set; } = 4.0;
     /// <summary>Gets or sets the upper frequency bound for truck-like vibration.</summary>
     public double TruckMaxHz { get; set; } = 12.0;
+    /// <summary>Gets or sets the rolling sample window length used to estimate vibration frequency.</summary>
+    public int EstimationWindowSeconds { get; set; } = 4;
 
     /// <summary>Validates that the editable activity bands are finite, ordered and within a 25 Hz sensor's Nyquist range.</summary>
     public void Validate()
@@ -29,6 +31,8 @@ public sealed class VibrationThresholdSettings
             throw new ArgumentOutOfRangeException(nameof(ActiveRmsMinMetersPerSecondSquared));
         if (StandingRmsMaxMetersPerSecondSquared >= ActiveRmsMinMetersPerSecondSquared)
             throw new ArgumentException("The active vibration floor must be higher than the stillness threshold.");
+        if (EstimationWindowSeconds is < 1 or > 10)
+            throw new ArgumentOutOfRangeException(nameof(EstimationWindowSeconds), "The rolling estimate window must be between 1 and 10 seconds.");
 
         ValidateBand(WalkingMinHz, WalkingMaxHz, nameof(WalkingMinHz));
         ValidateBand(RunningMinHz, RunningMaxHz, nameof(RunningMinHz));

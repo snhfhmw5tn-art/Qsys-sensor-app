@@ -29,8 +29,8 @@ public sealed class VibrationThresholdSettings
             throw new ArgumentOutOfRangeException(nameof(StandingRmsMaxMetersPerSecondSquared));
         if (!double.IsFinite(ActiveRmsMinMetersPerSecondSquared) || ActiveRmsMinMetersPerSecondSquared is < 0 or > 30)
             throw new ArgumentOutOfRangeException(nameof(ActiveRmsMinMetersPerSecondSquared));
-        if (EstimationWindowSeconds is < 1 or > 10)
-            throw new ArgumentOutOfRangeException(nameof(EstimationWindowSeconds), "The rolling estimate window must be between 1 and 10 seconds.");
+        if (EstimationWindowSeconds is < 0 or > 10)
+            throw new ArgumentOutOfRangeException(nameof(EstimationWindowSeconds), "The estimate window must be between live (0) and 10 seconds.");
 
         ValidateBand(WalkingMinHz, WalkingMaxHz, nameof(WalkingMinHz));
         ValidateBand(RunningMinHz, RunningMaxHz, nameof(RunningMinHz));

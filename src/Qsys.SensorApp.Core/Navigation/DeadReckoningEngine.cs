@@ -121,18 +121,18 @@ public sealed class DeadReckoningEngine
 
     private void UpdateHeading(SensorReading reading, double elapsedSeconds)
     {
-        if (reading.RotationRateDegreesPerSecond is { } rate && _headingDegrees is { } current)
-            _headingDegrees = Normalize(current + (rate.Z * elapsedSeconds));
-
         if (reading.HeadingDegrees is { } absoluteHeading && reading.OrientationIsAbsolute)
         {
             var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees);
             if (_headingDegrees is null) _headingDegrees = relativeHeading;
-            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
+            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.5));
             _headingQuality = 1;
         }
-        else if (reading.RotationRateDegreesPerSecond is not null)
+        else if (reading.RotationRateDegreesPerSecond is { } rate && _headingDegrees is { } current)
         {
+            // Gyroscope axes are device-relative. Do not integrate local yaw when
+            // an absolute, tilt-compensated compass heading is available.
+            _headingDegrees = Normalize(current + (rate.Z * elapsedSeconds));
             _headingQuality = Math.Max(_headingQuality * 0.995, 0.35);
         }
         else

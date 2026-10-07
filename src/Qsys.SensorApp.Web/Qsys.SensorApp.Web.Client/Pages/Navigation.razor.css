@@ -1,5 +1,18 @@
 .navigation-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-block: 1.25rem; }
 .navigation-stats p { margin: .45rem 0 0; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.movement-tuning { padding: 1.15rem; margin-block: 1rem; background: #fff; border: 1px solid #e1e7ea; border-radius: 12px; }
+.movement-tuning-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 1rem; }
+.movement-tuning-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.movement-tuning-heading h2 { margin: .25rem 0; font-size: 1.15rem; }
+.movement-tuning-heading p:not(.eyebrow) { margin: .25rem 0; color: #586b75; }
+.movement-tuning-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; margin-block: 1.1rem; }
+.movement-tuning-controls label { display: grid; gap: .45rem; color: #344650; font-size: .85rem; }
+.movement-tuning-controls label strong { color: #142b38; font-variant-numeric: tabular-nums; }
+.movement-tuning-controls input { width: 100%; accent-color: #147f78; }
+.movement-tuning-controls small { color: #637680; line-height: 1.4; }
+.movement-state { align-self: center; padding: .45rem .7rem; border: 1px solid #b9c5cb; border-radius: 999px; font-size: .8rem; white-space: nowrap; }
+.movement-state.is-moving { color: #075e46; background: #e8f7f0; border-color: #94d3b7; }
+.movement-state.is-still { color: #586b75; background: #f4f6f7; }
 .navigation-map { padding: 1rem; overflow: hidden; }
 .navigation-map svg { width: 100%; height: min(58vh, 560px); background: #f7f9fa; border: 1px solid #d9e1e5; border-radius: 12px; }
 .nav-graph line { stroke: #a6b6bf; stroke-width: .08; }

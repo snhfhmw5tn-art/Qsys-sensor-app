@@ -10,6 +10,7 @@ public sealed class DeadReckoningEngine
     private const double StandardAtmosphereKilopascals = 101.325;
     private KalmanPositionFilter _positionFilter;
     private readonly StepDetector _stepDetector;
+    private readonly MovementGate _movementGate = new();
     private readonly ActivityClassifier _activityClassifier = new();
     private readonly double _stepLengthMeters;
     private readonly double _mapMatchToleranceMeters;
@@ -23,6 +24,7 @@ public sealed class DeadReckoningEngine
     private double _stepQuality;
     private double? _referencePressureKilopascals;
     private double? _altitudeMeters;
+    private int _confirmedStepCount;
 
     /// <summary>Creates a local-coordinate dead-reckoning session.</summary>
     public DeadReckoningEngine(
@@ -52,6 +54,16 @@ public sealed class DeadReckoningEngine
     /// <summary>Gets the latest navigation estimate.</summary>
     public NavigationState State { get; private set; }
 
+    /// <summary>Gets whether a repeatable movement pattern is currently confirmed.</summary>
+    public bool IsMovementConfirmed => _movementGate.IsMoving;
+
+    /// <summary>Applies live movement tuning without restarting the navigation session.</summary>
+    public void ConfigureMovement(MovementGateSettings settings)
+    {
+        _movementGate.Configure(settings);
+        _stepDetector.SetThreshold(settings.StepPeakThresholdMetersPerSecondSquared);
+    }
+
     /// <summary>Sets the current direction as the local forward direction without changing the current position.</summary>
     public bool ResetHeadingToForward()
     {
@@ -75,9 +87,11 @@ public sealed class DeadReckoningEngine
         _headingDegrees = 0;
         _headingQuality = 0.5;
         _stepDetector.Reset();
+        _movementGate.Reset();
         _activityClassifier.Reset();
         _lastStepTimestamp = null;
         _stepQuality = 0;
+        _confirmedStepCount = 0;
         State = new NavigationState(DateTimeOffset.UtcNow, positionMeters, 0, 0, 0, 0.15, _positionFilter.StandardDeviation, false, null, ActivityEstimate.Unknown);
     }
 
@@ -94,21 +108,24 @@ public sealed class DeadReckoningEngine
         _lastTimestamp = reading.TimestampUtc;
 
         UpdateHeading(reading, elapsedSeconds);
-        var step = _stepDetector.Update(reading);
+        var detectedStep = _stepDetector.Update(reading);
+        var confirmedStepCount = _movementGate.Update(detectedStep, reading.TimestampUtc);
+        var stepDetected = confirmedStepCount > 0;
         var speed = State.SpeedMetersPerSecond;
-        if (step.Detected)
+        if (stepDetected)
         {
-            _lastStepTimestamp = step.TimestampUtc;
-            _stepQuality = step.Confidence;
-            if (step.IntervalSeconds > 0)
-                speed = Math.Min(2.5, _stepLengthMeters / step.IntervalSeconds);
+            _lastStepTimestamp = reading.TimestampUtc;
+            _confirmedStepCount += confirmedStepCount;
+            _stepQuality = detectedStep.Confidence;
+            if (detectedStep.IntervalSeconds > 0)
+                speed = Math.Min(2.5, _stepLengthMeters / detectedStep.IntervalSeconds);
 
             // Apply the configured step length for every detected step, including the first step of a session.
             // The first interval has no prior step to divide by, so it cannot produce a speed estimate, but it still moves position.
             if (_headingDegrees is { } heading)
             {
                 var radians = heading * Math.PI / 180;
-                var displacement = new Vector2(Math.Sin(radians), Math.Cos(radians)) * _stepLengthMeters;
+                var displacement = new Vector2(Math.Sin(radians), Math.Cos(radians)) * (_stepLengthMeters * confirmedStepCount);
                 _positionFilter.Predict(displacement, 0.025 + (_stepLengthMeters * 0.025));
             }
         }
@@ -118,7 +135,7 @@ public sealed class DeadReckoningEngine
         }
 
         UpdateAltitude(reading.PressureKilopascals);
-        var activity = _activityClassifier.Update(reading, step.Detected, _altitudeMeters);
+        var activity = _activityClassifier.Update(reading, stepDetected, _altitudeMeters);
 
         MapMatchResult? mapMatch = null;
         if (_graph is { Edges.Count: > 0 })
@@ -135,7 +152,7 @@ public sealed class DeadReckoningEngine
         var uncertaintyQuality = 1 / (1 + (_positionFilter.StandardDeviation / 10));
         var confidence = Math.Clamp(sensorQuality * uncertaintyQuality, 0, 1);
         var position = new Vector3(_positionFilter.Position.X, _positionFilter.Position.Y, _altitudeMeters ?? 0);
-        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _stepDetector.StepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position, activity);
+        State = new NavigationState(reading.TimestampUtc, position, _headingDegrees, speed, _confirmedStepCount, confidence, _positionFilter.StandardDeviation, mapMatch is not null, mapMatch?.Position, activity);
         return State;
     }
 

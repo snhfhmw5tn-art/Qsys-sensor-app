@@ -27,6 +27,16 @@
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
 <p class="small-note">The red line shows the direction the top edge of the device points. The blue track shows the estimated movement path.</p>
+<section class="movement-tuning">
+    <div class="movement-tuning-heading"><div><p class="eyebrow">MOVEMENT GATE · LIVE TUNING</p><h2>Movement confirmation</h2><p>One-off shakes are held as candidates. Position starts moving after a regular cadence is confirmed.</p></div><div class="movement-tuning-actions"><strong class="movement-state @(MovementConfirmed ? "is-moving" : "is-still")">@(MovementConfirmed ? "Movement confirmed" : "Waiting for regular movement")</strong><button class="quiet-button" @onclick="ResetMovementTuning">Restore defaults</button></div></div>
+    <div class="movement-tuning-controls">
+        <label>Step sensitivity <strong>@movementThreshold.ToString("0.00") m/s²</strong><input type="range" min="0.2" max="2" step="0.05" @bind="movementThreshold" @bind:after="OnMovementTuningChanged" /><small>Lower detects weaker steps; higher rejects small bumps.</small></label>
+        <label>Steps to start <strong>@stepsToConfirmStart</strong><input type="range" min="2" max="6" step="1" @bind="stepsToConfirmStart" @bind:after="OnMovementTuningChanged" /><small>Confirmed startup steps are included in the drawn distance.</small></label>
+        <label>Cadence variation <strong>@(cadenceVariationTolerance.ToString("P0"))</strong><input type="range" min="0.1" max="1" step="0.05" @bind="cadenceVariationTolerance" @bind:after="OnMovementTuningChanged" /><small>Lower requires more evenly spaced steps.</small></label>
+        <label>Pause before stopping <strong>@stopAfterSeconds.ToString("0.0") s</strong><input type="range" min="0.5" max="5" step="0.1" @bind="stopAfterSeconds" @bind:after="OnMovementTuningChanged" /><small>Longer tolerates pauses between steps.</small></label>
+    </div>
+    <p class="small-note">These values apply immediately, including during a session. The filter uses repeated acceleration peaks and their timing; it cannot prove that the whole person moved, so test several values while standing still and while walking.</p>
+</section>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
 
 <section class="twin-controls">
@@ -111,6 +121,11 @@
     private bool isDisposed;
     private bool isRunning;
     private bool hasAltitudeReading;
+    private double movementThreshold = 0.65;
+    private int stepsToConfirmStart = 3;
+    private double cadenceVariationTolerance = 0.45;
+    private double stopAfterSeconds = 1.8;
+    private bool MovementConfirmed => engine?.IsMovementConfirmed == true;
     private double? deviceForwardHeading;
     private double? deviceScreenOrientationDegrees;
     private double? deviceHeadingZeroOffsetDegrees;
@@ -193,6 +208,27 @@
         {
             sensorModule = await JS.InvokeAsync<IJSObjectReference>("import", "./sensors.js");
             drawingModule = await JS.InvokeAsync<IJSObjectReference>("import", "./drawing.js");
+            var storedMovementSettings = await drawingModule.InvokeAsync<JsonElement>("loadMovementSettings");
+            if (storedMovementSettings.ValueKind == JsonValueKind.Object)
+            {
+                try
+                {
+                    var settings = JsonSerializer.Deserialize<MovementGateSettings>(storedMovementSettings.GetRawText(), HistoryJsonOptions);
+                    if (settings is not null)
+                    {
+                        var validator = new MovementGate();
+                        validator.Configure(settings);
+                        movementThreshold = settings.StepPeakThresholdMetersPerSecondSquared;
+                        stepsToConfirmStart = settings.StepsToConfirmStart;
+                        cadenceVariationTolerance = settings.CadenceVariationTolerance;
+                        stopAfterSeconds = settings.StopAfterSeconds;
+                    }
+                }
+                catch (Exception exception) when (exception is JsonException or ArgumentException)
+                {
+                    message = "Saved movement tuning was invalid; default values are active.";
+                }
+            }
             var storedHistory = await drawingModule.InvokeAsync<JsonElement>("loadDigitalTwinHistory");
             if (storedHistory.ValueKind == JsonValueKind.Array)
             {
@@ -266,6 +302,7 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
+            engine.ConfigureMovement(CurrentMovementSettings());
             deviceForwardHeading = null;
             deviceScreenOrientationDegrees = null;
             deviceHeadingZeroOffsetDegrees = null;
@@ -286,6 +323,30 @@
         {
             isRunning = false; message = exception.Message;
         }
+    }
+
+    private MovementGateSettings CurrentMovementSettings() => new(movementThreshold, stepsToConfirmStart, cadenceVariationTolerance, stopAfterSeconds);
+
+    private async Task OnMovementTuningChanged()
+    {
+        var settings = CurrentMovementSettings();
+        try
+        {
+            engine?.ConfigureMovement(settings);
+            if (drawingModule is not null && !await drawingModule.InvokeAsync<bool>("saveMovementSettings", settings))
+                message = "Movement tuning applies now but could not be saved in this browser.";
+        }
+        catch (ArgumentOutOfRangeException exception) { message = exception.Message; }
+    }
+
+    private async Task ResetMovementTuning()
+    {
+        var defaults = new MovementGateSettings();
+        movementThreshold = defaults.StepPeakThresholdMetersPerSecondSquared;
+        stepsToConfirmStart = defaults.StepsToConfirmStart;
+        cadenceVariationTolerance = defaults.CadenceVariationTolerance;
+        stopAfterSeconds = defaults.StopAfterSeconds;
+        await OnMovementTuningChanged();
     }
 
     private void ResetPositionAndHeading()

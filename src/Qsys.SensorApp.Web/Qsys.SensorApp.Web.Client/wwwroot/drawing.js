@@ -1,5 +1,6 @@
 const mapStorageKey = "qsys.sensorapp.map.v1";
 const digitalTwinHistoryKey = "qsys.sensorapp.digital-twin.v1";
+const movementSettingsKey = "qsys.sensorapp.movement-gate.v1";
 const maximumDigitalTwinSamples = 5000;
 
 export function toMapPoint(svg, clientX, clientY) {
@@ -64,6 +65,24 @@ export function appendDigitalTwinSample(sample) {
 export function clearDigitalTwinHistory() {
     try {
         window.localStorage.removeItem(digitalTwinHistoryKey);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export function loadMovementSettings() {
+    try {
+        const serialized = window.localStorage.getItem(movementSettingsKey);
+        return serialized ? JSON.parse(serialized) : null;
+    } catch {
+        return null;
+    }
+}
+
+export function saveMovementSettings(settings) {
+    try {
+        window.localStorage.setItem(movementSettingsKey, JSON.stringify(settings));
         return true;
     } catch {
         return false;

@@ -23,9 +23,17 @@ public sealed class StepDetector
     }
 
     /// <summary>Gets the configured minimum filtered acceleration peak.</summary>
-    public double ThresholdMetersPerSecondSquared { get; }
+    public double ThresholdMetersPerSecondSquared { get; private set; }
     /// <summary>Gets the number of detected steps since reset.</summary>
     public int StepCount { get; private set; }
+
+    /// <summary>Changes the peak sensitivity without discarding the current sensor baseline.</summary>
+    public void SetThreshold(double thresholdMetersPerSecondSquared)
+    {
+        if (!double.IsFinite(thresholdMetersPerSecondSquared) || thresholdMetersPerSecondSquared <= 0)
+            throw new ArgumentOutOfRangeException(nameof(thresholdMetersPerSecondSquared));
+        ThresholdMetersPerSecondSquared = thresholdMetersPerSecondSquared;
+    }
 
     /// <summary>Processes one measurement and returns its step event, if a new step was detected.</summary>
     public StepDetection Update(SensorReading reading)

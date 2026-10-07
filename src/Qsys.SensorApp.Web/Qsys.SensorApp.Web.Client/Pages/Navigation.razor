@@ -19,7 +19,11 @@
     <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
     <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
     <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
-    @if (isRunning) { <button class="quiet-button" @onclick="ResetHeadingToForward" disabled="@(state.HeadingDegrees is null || viewMode != TwinViewMode.Live)">Set current direction as 0° / forward</button> }
+    @if (isRunning)
+    {
+        <button class="quiet-button" @onclick="SetRedDirectionToZero" disabled="@(deviceForwardHeading is null || viewMode != TwinViewMode.Live)">Set red device direction to 0°</button>
+        <button class="quiet-button" @onclick="SetGreenDirectionToZero" disabled="@(GetDisplayedBearing() is null || viewMode != TwinViewMode.Live)">Set green travel direction to 0°</button>
+    }
     @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
@@ -119,8 +123,10 @@
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? deviceForwardHeading;
-    private double? DisplayHeading => ReplaySample is { } sample ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees : deviceForwardHeading;
-    private double? DisplayBearing => GetDisplayedBearing();
+    private double? redDirectionOffsetDegrees;
+    private double? greenDirectionOffsetDegrees;
+    private double? DisplayHeading => AdjustBearing(ReplaySample is { } sample ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees : deviceForwardHeading, redDirectionOffsetDegrees);
+    private double? DisplayBearing => AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees);
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -155,6 +161,10 @@
     }
 
     private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
+
+    private static double? AdjustBearing(double? bearing, double? offset) => bearing is { } value
+        ? NormalizeBearing(value - (offset ?? 0))
+        : null;
     private string ReplayTimestamp => ReplaySample is { } sample ? sample.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "No history";
     private string TopActivityInsight
     {
@@ -248,6 +258,8 @@
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
             deviceForwardHeading = null;
+            redDirectionOffsetDegrees = null;
+            greenDirectionOffsetDegrees = null;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
             state = engine.State;
@@ -266,13 +278,19 @@
         }
     }
 
-    private void ResetHeadingToForward()
+    private void SetRedDirectionToZero()
     {
-        if (engine?.ResetHeadingToForward() == true)
-        {
-            state = engine.State;
-            message = "Current direction is now 0° (local forward/map north). Position was kept unchanged; calibration applies to future movement.";
-        }
+        if (deviceForwardHeading is not { } heading) return;
+        redDirectionOffsetDegrees = heading;
+        if (engine?.ResetHeadingToForward() == true) state = engine.State;
+        message = "Red device direction set to 0°. Navigation now uses the current direction as its forward reference.";
+    }
+
+    private void SetGreenDirectionToZero()
+    {
+        if (GetDisplayedBearing() is not { } bearing) return;
+        greenDirectionOffsetDegrees = bearing;
+        message = "Green travel direction set to 0°. Red device direction is unchanged.";
     }
 
     private async Task StopNavigation()

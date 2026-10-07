@@ -60,6 +60,9 @@ public sealed class DeadReckoningEngine
     /// <summary>Gets provisional step events shown as a live preview until the cadence is confirmed.</summary>
     public int PendingStepCount => _movementGate.PendingStepCount;
 
+    /// <summary>Gets whether rapid rotation is temporarily preventing candidate steps from moving position.</summary>
+    public bool IsTurnSuppressed => _movementGate.IsTurnSuppressed;
+
     /// <summary>Applies live movement tuning without restarting the navigation session.</summary>
     public void ConfigureMovement(MovementGateSettings settings)
     {
@@ -112,7 +115,10 @@ public sealed class DeadReckoningEngine
 
         UpdateHeading(reading, elapsedSeconds);
         var detectedStep = _stepDetector.Update(reading);
-        var confirmedStepCount = _movementGate.Update(detectedStep, reading.TimestampUtc);
+        var turnRate = GetVerticalHeadingRate(reading) is { } verticalRate
+            ? Math.Abs(verticalRate)
+            : reading.RotationRateDegreesPerSecond?.Magnitude;
+        var confirmedStepCount = _movementGate.Update(detectedStep, reading.TimestampUtc, turnRate);
         var stepDetected = confirmedStepCount > 0;
         var speed = State.SpeedMetersPerSecond;
         if (stepDetected)

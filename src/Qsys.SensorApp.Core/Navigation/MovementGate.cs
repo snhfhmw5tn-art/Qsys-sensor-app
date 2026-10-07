@@ -5,13 +5,15 @@ public sealed record MovementGateSettings(
     double StepPeakThresholdMetersPerSecondSquared = 0.65,
     int StepsToConfirmStart = 3,
     double CadenceVariationTolerance = 0.45,
-    double StopAfterSeconds = 1.8);
+    double StopAfterSeconds = 1.8,
+    double TurnRateThresholdDegreesPerSecond = 90);
 
 /// <summary>Requires a repeatable step cadence before allowing step detections to move the estimated position.</summary>
 public sealed class MovementGate
 {
     private readonly List<StepDetection> _candidates = [];
     private DateTimeOffset? _lastAcceptedStep;
+    private DateTimeOffset? _turnQuietSince;
     private double? _previousInterval;
 
     /// <summary>Gets the currently applied movement confirmation settings.</summary>
@@ -19,6 +21,9 @@ public sealed class MovementGate
 
     /// <summary>Gets whether the current sensor sequence has confirmed sustained movement.</summary>
     public bool IsMoving { get; private set; }
+
+    /// <summary>Gets whether a rapid device turn is temporarily suppressing step movement.</summary>
+    public bool IsTurnSuppressed { get; private set; }
 
     /// <summary>Gets the provisional steps currently waiting for cadence confirmation.</summary>
     public int PendingStepCount => IsMoving ? 0 : _candidates.Count;
@@ -35,6 +40,8 @@ public sealed class MovementGate
             throw new ArgumentOutOfRangeException(nameof(settings.CadenceVariationTolerance));
         if (!double.IsFinite(settings.StopAfterSeconds) || settings.StopAfterSeconds is < 0.5 or > 5)
             throw new ArgumentOutOfRangeException(nameof(settings.StopAfterSeconds));
+        if (!double.IsFinite(settings.TurnRateThresholdDegreesPerSecond) || settings.TurnRateThresholdDegreesPerSecond is < 40 or > 400)
+            throw new ArgumentOutOfRangeException(nameof(settings.TurnRateThresholdDegreesPerSecond));
 
         Settings = settings;
         _candidates.Clear();
@@ -42,8 +49,32 @@ public sealed class MovementGate
     }
 
     /// <summary>Updates the gate and returns how many steps should now be applied to the track.</summary>
-    public int Update(StepDetection step, DateTimeOffset timestamp)
+    public int Update(StepDetection step, DateTimeOffset timestamp, double? rotationRateDegreesPerSecond = null)
     {
+        if (rotationRateDegreesPerSecond is { } rotation && rotation >= Settings.TurnRateThresholdDegreesPerSecond)
+        {
+            // A fast pivot often creates acceleration peaks even though the person has not translated; freeze the track while turning.
+            ResetMovement();
+            IsTurnSuppressed = true;
+            _turnQuietSince = null;
+            return 0;
+        }
+
+        if (IsTurnSuppressed)
+        {
+            if (rotationRateDegreesPerSecond is not { } calmRate || calmRate > Settings.TurnRateThresholdDegreesPerSecond * 0.6)
+            {
+                _turnQuietSince = null;
+                return 0;
+            }
+
+            _turnQuietSince ??= timestamp;
+            if ((timestamp - _turnQuietSince.Value).TotalSeconds < 0.6) return 0;
+            IsTurnSuppressed = false;
+            _turnQuietSince = null;
+            return 0;
+        }
+
         if (!step.Detected)
         {
             if (_lastAcceptedStep is { } last && (timestamp - last).TotalSeconds >= Settings.StopAfterSeconds)
@@ -104,6 +135,8 @@ public sealed class MovementGate
         _lastAcceptedStep = null;
         _previousInterval = null;
         IsMoving = false;
+        IsTurnSuppressed = false;
+        _turnQuietSince = null;
     }
 
     private bool HasConsistentCadence(double interval) => IsPlausibleInterval(interval) &&

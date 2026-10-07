@@ -28,13 +28,14 @@
 </section>
 <p class="small-note">The red line shows the direction the top edge of the device points. The blue track shows the estimated movement path.</p>
 <section class="movement-tuning">
-    <div class="movement-tuning-heading"><div><p class="eyebrow">MOVEMENT GATE · LIVE TUNING</p><h2>Movement confirmation</h2><p>The map previews candidate steps immediately. They become recorded distance after a regular cadence is confirmed.</p></div><div class="movement-tuning-actions"><strong class="movement-state @(MovementConfirmed ? "is-moving" : "is-still")">@(MovementConfirmed ? "Movement confirmed" : PendingStepCount > 0 ? "Checking movement" : "Waiting for regular movement")</strong><button class="quiet-button" @onclick="ResetMovementTuning">Restore defaults</button></div></div>
+    <div class="movement-tuning-heading"><div><p class="eyebrow">MOVEMENT GATE · LIVE TUNING</p><h2>Movement confirmation</h2><p>The map previews candidate steps immediately. It pauses during a rapid turn and resumes after the device settles and a regular cadence returns.</p></div><div class="movement-tuning-actions"><strong class="movement-state @(MovementConfirmed ? "is-moving" : IsTurnSuppressed ? "is-turning" : "is-still")">@(IsTurnSuppressed ? "Turning · track paused" : MovementConfirmed ? "Movement confirmed" : PendingStepCount > 0 ? "Checking movement" : "Waiting for regular movement")</strong><button class="quiet-button" @onclick="ResetMovementTuning">Restore defaults</button></div></div>
     @if (PendingStepCount > 0) { <p class="movement-preview-note">Live preview: approximately +@((PendingStepCount * stepLength).ToString("0.00")) m · not yet included in recorded distance</p> }
     <div class="movement-tuning-controls">
         <label>Step sensitivity <strong>@movementThreshold.ToString("0.00") m/s²</strong><input type="range" min="0.2" max="2" step="0.05" @bind="movementThreshold" @bind:after="OnMovementTuningChanged" /><small>Lower detects weaker steps; higher rejects small bumps.</small></label>
         <label>Steps to start <strong>@stepsToConfirmStart</strong><input type="range" min="2" max="6" step="1" @bind="stepsToConfirmStart" @bind:after="OnMovementTuningChanged" /><small>Confirmed startup steps are included in the drawn distance.</small></label>
         <label>Cadence variation <strong>@(cadenceVariationTolerance.ToString("P0"))</strong><input type="range" min="0.1" max="1" step="0.05" @bind="cadenceVariationTolerance" @bind:after="OnMovementTuningChanged" /><small>Lower requires more evenly spaced steps.</small></label>
         <label>Pause before stopping <strong>@stopAfterSeconds.ToString("0.0") s</strong><input type="range" min="0.5" max="5" step="0.1" @bind="stopAfterSeconds" @bind:after="OnMovementTuningChanged" /><small>Longer tolerates pauses between steps.</small></label>
+        <label>Turn suppression <strong>@turnRateThreshold.ToString("0") °/s</strong><input type="range" min="60" max="300" step="10" @bind="turnRateThreshold" @bind:after="OnMovementTuningChanged" /><small>Vertical gyroscope rotation. Lower pauses the track sooner during a pivot.</small></label>
     </div>
     <p class="small-note">These values apply immediately, including during a session. The filter uses repeated acceleration peaks and their timing; it cannot prove that the whole person moved, so test several values while standing still and while walking.</p>
 </section>
@@ -132,6 +133,7 @@
     private double cadenceVariationTolerance = 0.45;
     private double stopAfterSeconds = 1.8;
     private bool MovementConfirmed => engine?.IsMovementConfirmed == true;
+    private bool IsTurnSuppressed => engine?.IsTurnSuppressed == true;
     private int PendingStepCount => engine?.PendingStepCount ?? 0;
     private Vector2? LivePreviewPosition
     {
@@ -163,6 +165,7 @@
     private double initialY;
     private double initialHeading;
     private double stepLength = 0.72;
+    private double turnRateThreshold = 90;
     private int lastTrackedStepCount;
     private string mapMessage = "Loading saved map…";
     private string? message;
@@ -234,6 +237,9 @@
                     var settings = JsonSerializer.Deserialize<MovementGateSettings>(storedMovementSettings.GetRawText(), HistoryJsonOptions);
                     if (settings is not null)
                     {
+                        // Older saved tuning predates the turn-rate control; keep its existing values and add the new default.
+                        if (settings.TurnRateThresholdDegreesPerSecond == 0)
+                            settings = settings with { TurnRateThresholdDegreesPerSecond = new MovementGateSettings().TurnRateThresholdDegreesPerSecond };
                         var validator = new MovementGate();
                         validator.Configure(settings);
                         movementThreshold = settings.StepPeakThresholdMetersPerSecondSquared;
@@ -343,7 +349,7 @@
         }
     }
 
-    private MovementGateSettings CurrentMovementSettings() => new(movementThreshold, stepsToConfirmStart, cadenceVariationTolerance, stopAfterSeconds);
+    private MovementGateSettings CurrentMovementSettings() => new(movementThreshold, stepsToConfirmStart, cadenceVariationTolerance, stopAfterSeconds, turnRateThreshold);
 
     private async Task OnMovementTuningChanged()
     {
@@ -364,6 +370,7 @@
         stepsToConfirmStart = defaults.StepsToConfirmStart;
         cadenceVariationTolerance = defaults.CadenceVariationTolerance;
         stopAfterSeconds = defaults.StopAfterSeconds;
+        turnRateThreshold = defaults.TurnRateThresholdDegreesPerSecond;
         await OnMovementTuningChanged();
     }
 

@@ -13,6 +13,7 @@
 .movement-state { align-self: center; padding: .45rem .7rem; border: 1px solid #b9c5cb; border-radius: 999px; font-size: .8rem; white-space: nowrap; }
 .movement-state.is-moving { color: #075e46; background: #e8f7f0; border-color: #94d3b7; }
 .movement-state.is-still { color: #586b75; background: #f4f6f7; }
+.movement-state.is-turning { color: #805c12; background: #fff6df; border-color: #e7c46b; }
 .movement-preview-note { margin: .5rem 0; color: #147f78; font-size: .85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .nav-track-preview { fill: none; stroke: #147f78; stroke-width: .075; stroke-dasharray: .18 .14; opacity: .75; animation: preview-flow 1s linear infinite; }
 .nav-position-preview { fill: #fff; stroke: #147f78; stroke-width: .07; stroke-dasharray: .12 .08; }

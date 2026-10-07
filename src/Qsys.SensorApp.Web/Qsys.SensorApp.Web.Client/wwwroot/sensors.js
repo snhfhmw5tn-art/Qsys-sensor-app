@@ -107,7 +107,12 @@ export async function start(dotnet, requestedFrequencyHz) {
         const onOrientation = (event) => {
             const hasCompass = Number.isFinite(event.webkitCompassHeading);
             const absolute = event.absolute === true || hasCompass;
-            session.latest.headingDegrees = hasCompass ? normalize(event.webkitCompassHeading) : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
+            const hasEulerOrientation = [event.alpha, event.beta, event.gamma].every(Number.isFinite);
+            session.latest.headingDegrees = hasCompass
+                ? normalize(event.webkitCompassHeading)
+                : absolute && hasEulerOrientation
+                    ? compassHeading(event.alpha, event.beta, event.gamma)
+                    : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
             session.latest.pitchDegrees = finite(event.beta);
             session.latest.rollDegrees = finite(event.gamma);
             session.latest.orientationIsAbsolute = absolute;
@@ -281,4 +286,26 @@ function finite(value) {
 
 function normalize(degrees) {
     return ((degrees % 360) + 360) % 360;
+}
+
+// Estimate the horizontal bearing of the device's forward axis from its full
+// orientation so pitch and roll do not masquerade as a change in heading.
+function compassHeading(alphaDegrees, betaDegrees, gammaDegrees) {
+    if (![alphaDegrees, betaDegrees, gammaDegrees].every(Number.isFinite)) return null;
+
+    const radians = Math.PI / 180;
+    const alpha = alphaDegrees * radians;
+    const beta = betaDegrees * radians;
+    const gamma = gammaDegrees * radians;
+    const sinAlpha = Math.sin(alpha);
+    const cosAlpha = Math.cos(alpha);
+    const sinBeta = Math.sin(beta);
+    const cosBeta = Math.cos(beta);
+    const sinGamma = Math.sin(gamma);
+    const cosGamma = Math.cos(gamma);
+
+    const east = -cosAlpha * sinGamma - sinAlpha * sinBeta * cosGamma;
+    const north = -sinAlpha * sinGamma + cosAlpha * sinBeta * cosGamma;
+    if (Math.hypot(east, north) < 1e-6) return null;
+    return normalize(Math.atan2(east, north) / radians);
 }

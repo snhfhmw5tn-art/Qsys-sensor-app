@@ -121,8 +121,8 @@ public sealed class DeadReckoningEngine
 
     private void UpdateHeading(SensorReading reading, double elapsedSeconds)
     {
-        if (reading.RotationRateDegreesPerSecond is { } rate && _headingDegrees is { } current)
-            _headingDegrees = Normalize(current + (rate.Z * elapsedSeconds));
+        if (GetVerticalHeadingRate(reading) is { } headingRate && _headingDegrees is { } current)
+            _headingDegrees = Normalize(current + (headingRate * elapsedSeconds));
 
         if (reading.HeadingDegrees is { } absoluteHeading && reading.OrientationIsAbsolute)
         {
@@ -131,7 +131,7 @@ public sealed class DeadReckoningEngine
             else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
             _headingQuality = 1;
         }
-        else if (reading.RotationRateDegreesPerSecond is not null)
+        else if (GetVerticalHeadingRate(reading) is not null)
         {
             _headingQuality = Math.Max(_headingQuality * 0.995, 0.35);
         }
@@ -139,6 +139,13 @@ public sealed class DeadReckoningEngine
         {
             _headingQuality *= 0.999;
         }
+    }
+
+    private static double? GetVerticalHeadingRate(SensorReading reading)
+    {
+        if (reading.RotationRateDegreesPerSecond is not { } rate || reading.AccelerationIncludingGravity is not { } gravity) return null;
+        if (gravity.Magnitude < 6 || gravity.Magnitude > 13) return null;
+        return ((rate.X * gravity.X) + (rate.Y * gravity.Y) + (rate.Z * gravity.Z)) / gravity.Magnitude;
     }
 
     private void UpdateAltitude(double? pressureKilopascals)

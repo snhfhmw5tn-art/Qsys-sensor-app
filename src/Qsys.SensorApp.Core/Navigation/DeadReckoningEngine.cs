@@ -101,14 +101,15 @@ public sealed class DeadReckoningEngine
             _lastStepTimestamp = step.TimestampUtc;
             _stepQuality = step.Confidence;
             if (step.IntervalSeconds > 0)
-            {
                 speed = Math.Min(2.5, _stepLengthMeters / step.IntervalSeconds);
-                if (_headingDegrees is { } heading)
-                {
-                    var radians = heading * Math.PI / 180;
-                    var displacement = new Vector2(Math.Sin(radians), Math.Cos(radians)) * _stepLengthMeters;
-                    _positionFilter.Predict(displacement, 0.025 + (_stepLengthMeters * 0.025));
-                }
+
+            // Apply the configured step length for every detected step, including the first step of a session.
+            // The first interval has no prior step to divide by, so it cannot produce a speed estimate, but it still moves position.
+            if (_headingDegrees is { } heading)
+            {
+                var radians = heading * Math.PI / 180;
+                var displacement = new Vector2(Math.Sin(radians), Math.Cos(radians)) * _stepLengthMeters;
+                _positionFilter.Predict(displacement, 0.025 + (_stepLengthMeters * 0.025));
             }
         }
         else if (_lastStepTimestamp is not { } lastStep || (reading.TimestampUtc - lastStep).TotalSeconds > 1)

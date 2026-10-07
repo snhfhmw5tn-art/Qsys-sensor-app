@@ -44,7 +44,7 @@
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
     <div><span class="eyebrow">DEVICE DIRECTION · RED</span><p>@(DisplayDeviceHeading?.ToString("0.0") ?? "—")°</p><small>Direction the top edge of the device points</small></div>
-    <div><span class="eyebrow">DRAWN DISTANCE</span><p>@DrawnDistanceMeters.ToString("0.00") m</p><small>Accumulated length of the displayed track</small></div>
+    <div><span class="eyebrow">DRAWN DISTANCE</span><p>@DrawnDistanceMeters.ToString("0.00") m</p><small>Confirmed steps × configured step length</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
     <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@(ReplaySample is { } replay ? replay.Activity : state.Activity.Type) · @ReplayActivityConfidence.ToString("0")%</p></div>
@@ -130,6 +130,7 @@
     private double initialY;
     private double initialHeading;
     private double stepLength = 0.72;
+    private int lastTrackedStepCount;
     private string mapMessage = "Loading saved map…";
     private string? message;
     private DateTime lastUiUpdate = DateTime.MinValue;
@@ -140,7 +141,9 @@
     private Vector2[] DisplayedTrackPoints => viewMode == TwinViewMode.Replay && ReplaySample is { } replay
         ? twinHistory.Take(replayIndex + 1).Where(sample => sample.SessionId == replay.SessionId).Select(sample => new Vector2(sample.X, sample.Y)).ToArray()
         : track.ToArray();
-    private double DrawnDistanceMeters => GetPathLength(DisplayedTrackPoints);
+    private double DrawnDistanceMeters => ReplaySample is { } sample
+        ? sample.StepCount * sample.StepLengthMeters
+        : state.StepCount * stepLength;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
@@ -150,17 +153,6 @@
         : hasAltitudeReading ? $"Session range: {minimumElevation:0.00} to {maximumElevation:0.00} m" : "Requires a device barometer; 0.00 m is not assumed when unavailable.";
     private double ReplayActivityConfidence => (ReplaySample?.ActivityConfidence ?? state.Activity.Confidence) * 100;
     private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
-
-    private static double GetPathLength(IReadOnlyList<Vector2> points)
-    {
-        var length = 0d;
-        for (var index = 1; index < points.Count; index++)
-        {
-            var segmentLength = (points[index] - points[index - 1]).Length;
-            if (segmentLength >= 0.02) length += segmentLength;
-        }
-        return length;
-    }
 
     private IEnumerable<Vector2> DistanceMarkers()
     {
@@ -173,7 +165,7 @@
             var segment = points[index] - start;
             var segmentLength = segment.Length;
             if (segmentLength < 0.02) continue;
-            while (nextMarkerDistance <= distanceAlongPath + segmentLength)
+            while (nextMarkerDistance <= DrawnDistanceMeters && nextMarkerDistance <= distanceAlongPath + segmentLength)
             {
                 var fraction = (nextMarkerDistance - distanceAlongPath) / segmentLength;
                 yield return start + (segment * fraction);
@@ -284,6 +276,7 @@
             currentSessionId = Guid.NewGuid();
             lastHistoryCapture = null;
             track.Clear(); track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+            lastTrackedStepCount = state.StepCount;
             dotnetReference?.Dispose(); dotnetReference = DotNetObjectReference.Create(this);
             using var result = await sensorModule.InvokeAsync<JsonDocument>("start", dotnetReference, 25);
             isRunning = true;
@@ -306,6 +299,7 @@
         state = engine.State;
         track.Clear();
         track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+        lastTrackedStepCount = state.StepCount;
         currentSessionId = Guid.NewGuid();
         lastHistoryCapture = null;
         viewMode = TwinViewMode.Live;
@@ -341,8 +335,13 @@
                 minimumElevation = Math.Min(minimumElevation, state.PositionMeters.Z);
                 maximumElevation = Math.Max(maximumElevation, state.PositionMeters.Z);
             }
-            track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
-            if (track.Count > 600) track.RemoveAt(0);
+            // Keep only step-driven positions in the visible polyline; per-sample map corrections otherwise inflate the measured path.
+            if (state.StepCount > lastTrackedStepCount)
+            {
+                track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+                lastTrackedStepCount = state.StepCount;
+                if (track.Count > 600) track.RemoveAt(0);
+            }
             if (lastHistoryCapture is null || (state.TimestampUtc - lastHistoryCapture.Value).TotalSeconds >= 1)
                 await CaptureHistorySample();
             if ((DateTime.UtcNow - lastUiUpdate).TotalMilliseconds >= 100)
@@ -379,7 +378,7 @@
             : state.HeadingDegrees;
         var sample = new DigitalTwinSample(currentSessionId, state.TimestampUtc, state.PositionMeters.X, state.PositionMeters.Y, state.PositionMeters.Z,
             state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence,
-            localDeviceHeading, deviceScreenOrientationDegrees);
+            localDeviceHeading, deviceScreenOrientationDegrees, stepLength);
         twinHistory.Add(sample);
         if (twinHistory.Count > MaximumHistorySamples) twinHistory.RemoveAt(0);
         heatmapCells.Clear(); heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));
@@ -388,7 +387,7 @@
             var saved = await drawingModule.InvokeAsync<bool>("appendDigitalTwinSample", new
             {
                 sessionId = sample.SessionId, timestampUtc = sample.TimestampUtc, sample.X, sample.Y, sample.Z, sample.HeadingDegrees, sample.DeviceForwardHeadingDegrees,
-                sample.DeviceScreenOrientationDegrees,
+                sample.DeviceScreenOrientationDegrees, sample.StepLengthMeters,
                 sample.SpeedMetersPerSecond, sample.StepCount, sample.Confidence, sample.PositionUncertaintyMeters,
                 activity = sample.Activity.ToString(), sample.ActivityConfidence
             });
@@ -400,7 +399,7 @@
     private static bool IsValidSample(DigitalTwinSample sample) => sample is not null && sample.SessionId != Guid.Empty && double.IsFinite(sample.X) && double.IsFinite(sample.Y) && double.IsFinite(sample.Z) &&
         double.IsFinite(sample.SpeedMetersPerSecond) && sample.SpeedMetersPerSecond >= 0 && sample.StepCount >= 0 &&
         double.IsFinite(sample.Confidence) && sample.Confidence is >= 0 and <= 1 && double.IsFinite(sample.PositionUncertaintyMeters) && sample.PositionUncertaintyMeters >= 0 &&
-        double.IsFinite(sample.ActivityConfidence) && sample.ActivityConfidence is >= 0 and <= 1 &&
+        double.IsFinite(sample.ActivityConfidence) && sample.ActivityConfidence is >= 0 and <= 1 && double.IsFinite(sample.StepLengthMeters) && sample.StepLengthMeters > 0 &&
         (sample.HeadingDegrees is null || double.IsFinite(sample.HeadingDegrees.Value)) &&
         (sample.DeviceForwardHeadingDegrees is null || double.IsFinite(sample.DeviceForwardHeadingDegrees.Value)) &&
         (sample.DeviceScreenOrientationDegrees is null || double.IsFinite(sample.DeviceScreenOrientationDegrees.Value)) && Enum.IsDefined(sample.Activity);

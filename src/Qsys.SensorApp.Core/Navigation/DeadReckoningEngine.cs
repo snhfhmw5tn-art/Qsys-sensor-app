@@ -57,6 +57,9 @@ public sealed class DeadReckoningEngine
     /// <summary>Gets whether a repeatable movement pattern is currently confirmed.</summary>
     public bool IsMovementConfirmed => _movementGate.IsMoving;
 
+    /// <summary>Gets provisional step events shown as a live preview until the cadence is confirmed.</summary>
+    public int PendingStepCount => _movementGate.PendingStepCount;
+
     /// <summary>Applies live movement tuning without restarting the navigation session.</summary>
     public void ConfigureMovement(MovementGateSettings settings)
     {

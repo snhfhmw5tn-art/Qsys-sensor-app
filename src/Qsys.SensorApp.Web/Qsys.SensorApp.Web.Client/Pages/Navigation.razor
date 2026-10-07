@@ -28,7 +28,8 @@
 </section>
 <p class="small-note">The red line shows the direction the top edge of the device points. The blue track shows the estimated movement path.</p>
 <section class="movement-tuning">
-    <div class="movement-tuning-heading"><div><p class="eyebrow">MOVEMENT GATE · LIVE TUNING</p><h2>Movement confirmation</h2><p>One-off shakes are held as candidates. Position starts moving after a regular cadence is confirmed.</p></div><div class="movement-tuning-actions"><strong class="movement-state @(MovementConfirmed ? "is-moving" : "is-still")">@(MovementConfirmed ? "Movement confirmed" : "Waiting for regular movement")</strong><button class="quiet-button" @onclick="ResetMovementTuning">Restore defaults</button></div></div>
+    <div class="movement-tuning-heading"><div><p class="eyebrow">MOVEMENT GATE · LIVE TUNING</p><h2>Movement confirmation</h2><p>The map previews candidate steps immediately. They become recorded distance after a regular cadence is confirmed.</p></div><div class="movement-tuning-actions"><strong class="movement-state @(MovementConfirmed ? "is-moving" : "is-still")">@(MovementConfirmed ? "Movement confirmed" : PendingStepCount > 0 ? "Checking movement" : "Waiting for regular movement")</strong><button class="quiet-button" @onclick="ResetMovementTuning">Restore defaults</button></div></div>
+    @if (PendingStepCount > 0) { <p class="movement-preview-note">Live preview: approximately +@((PendingStepCount * stepLength).ToString("0.00")) m · not yet included in recorded distance</p> }
     <div class="movement-tuning-controls">
         <label>Step sensitivity <strong>@movementThreshold.ToString("0.00") m/s²</strong><input type="range" min="0.2" max="2" step="0.05" @bind="movementThreshold" @bind:after="OnMovementTuningChanged" /><small>Lower detects weaker steps; higher rejects small bumps.</small></label>
         <label>Steps to start <strong>@stepsToConfirmStart</strong><input type="range" min="2" max="6" step="1" @bind="stepsToConfirmStart" @bind:after="OnMovementTuningChanged" /><small>Confirmed startup steps are included in the drawn distance.</small></label>
@@ -82,6 +83,11 @@
             }
         }
         @if (viewMode != TwinViewMode.Heatmap) { <path class="nav-track" d="@DisplayedTrackPath()" /> }
+        @if (viewMode == TwinViewMode.Live && LivePreviewPosition is { } previewPosition)
+        {
+            <path class="nav-track-preview" d="@LivePreviewPath(previewPosition)" />
+            <circle class="nav-position-preview" cx="@N(previewPosition.X)" cy="@N(-previewPosition.Y)" r="0.16"><title>Provisional position · awaiting movement confirmation</title></circle>
+        }
         @if (viewMode != TwinViewMode.Heatmap)
         {
             @foreach (var marker in DistanceMarkers())
@@ -97,7 +103,7 @@
             <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
         }
     </svg>
-    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: device direction</span></div>
+    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: device direction</span>@if (viewMode == TwinViewMode.Live && PendingStepCount > 0) { <span><i class="legend-preview"></i>Dashed: live preview awaiting confirmation</span> }</div>
     <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Bearing 0° points north; east is +X. Travel direction appears after movement.")</p>
 </section>
 
@@ -126,6 +132,18 @@
     private double cadenceVariationTolerance = 0.45;
     private double stopAfterSeconds = 1.8;
     private bool MovementConfirmed => engine?.IsMovementConfirmed == true;
+    private int PendingStepCount => engine?.PendingStepCount ?? 0;
+    private Vector2? LivePreviewPosition
+    {
+        get
+        {
+            if (!isRunning || viewMode != TwinViewMode.Live || PendingStepCount == 0) return null;
+            var heading = state.HeadingDegrees ?? initialHeading;
+            var radians = heading * Math.PI / 180;
+            var distance = PendingStepCount * stepLength;
+            return new Vector2(state.PositionMeters.X + Math.Sin(radians) * distance, state.PositionMeters.Y + Math.Cos(radians) * distance);
+        }
+    }
     private double? deviceForwardHeading;
     private double? deviceScreenOrientationDegrees;
     private double? deviceHeadingZeroOffsetDegrees;
@@ -424,6 +442,11 @@
     }
 
     private string TrackPath() => track.Count < 2 ? string.Empty : string.Join(" ", track.Select((point, index) => $"{(index == 0 ? "M" : "L")}{N(point.X)},{N(-point.Y)}"));
+    private string LivePreviewPath(Vector2 previewPosition)
+    {
+        var start = track.Count > 0 ? track[^1] : new Vector2(state.PositionMeters.X, state.PositionMeters.Y);
+        return $"M{N(start.X)},{N(-start.Y)} L{N(previewPosition.X)},{N(-previewPosition.Y)}";
+    }
     private string DisplayedTrackPath()
     {
         if (viewMode != TwinViewMode.Replay || ReplaySample is not { } replay) return TrackPath();
@@ -536,6 +559,7 @@
         {
             // A fresh session has a fresh track. Old sessions must not keep the live canvas zoomed out.
             points = points.Concat(track);
+            if (LivePreviewPosition is { } preview) points = points.Append(preview);
         }
         else if (viewMode == TwinViewMode.Heatmap)
         {

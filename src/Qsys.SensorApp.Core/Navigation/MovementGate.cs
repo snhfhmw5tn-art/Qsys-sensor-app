@@ -20,6 +20,9 @@ public sealed class MovementGate
     /// <summary>Gets whether the current sensor sequence has confirmed sustained movement.</summary>
     public bool IsMoving { get; private set; }
 
+    /// <summary>Gets the provisional steps currently waiting for cadence confirmation.</summary>
+    public int PendingStepCount => IsMoving ? 0 : _candidates.Count;
+
     /// <summary>Applies updated tuning values immediately to the active session.</summary>
     public void Configure(MovementGateSettings settings)
     {

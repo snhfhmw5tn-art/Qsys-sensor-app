@@ -39,7 +39,8 @@
 
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
-    <div><span class="eyebrow">HEADING</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p></div>
+    <div><span class="eyebrow">DEVICE FORWARD · RED</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p><small>Direction the device is pointing</small></div>
+    <div><span class="eyebrow">BEARING · GREEN</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction of travel from the position track</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
     <div><span class="eyebrow">ACTIVITY · CONFIDENCE</span><p>@(ReplaySample is { } replay ? replay.Activity : state.Activity.Type) · @ReplayActivityConfidence.ToString("0")%</p></div>
@@ -73,8 +74,14 @@
             var angle = heading * Math.PI / 180;
             <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
         }
+        @if (DisplayBearing is { } bearing)
+        {
+            var angle = bearing * Math.PI / 180;
+            <line class="nav-bearing" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
+        }
     </svg>
-    <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Heading 0° points north; east is +X.")</p>
+    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: device forward</span><span><i class="legend-bearing"></i>Green: travel bearing</span></div>
+    <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Bearing 0° points north; east is +X. Bearing appears after measurable movement.")</p>
 </section>
 
 @code {
@@ -112,6 +119,7 @@
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? DisplayHeading => ReplaySample is { } sample ? sample.HeadingDegrees : state.HeadingDegrees;
+    private double? DisplayBearing => GetDisplayedBearing();
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -290,6 +298,34 @@
         var points = twinHistory.Take(replayIndex + 1).Where(sample => sample.SessionId == replay.SessionId).Select(sample => new Vector2(sample.X, sample.Y)).ToArray();
         return points.Length < 2 ? string.Empty : string.Join(" ", points.Select((point, index) => $"{(index == 0 ? "M" : "L")}{N(point.X)},{N(-point.Y)}"));
     }
+
+    private double? GetDisplayedBearing()
+    {
+        if (viewMode == TwinViewMode.Replay && ReplaySample is { } replay)
+        {
+            for (var index = Math.Min(replayIndex - 1, twinHistory.Count - 1); index >= 0; index--)
+            {
+                var previous = twinHistory[index];
+                if (previous.SessionId != replay.SessionId) continue;
+                var deltaX = replay.X - previous.X;
+                var deltaY = replay.Y - previous.Y;
+                if ((deltaX * deltaX) + (deltaY * deltaY) < 0.0025) continue;
+                return NormalizeBearing(Math.Atan2(deltaX, deltaY) * 180 / Math.PI);
+            }
+            return null;
+        }
+
+        for (var index = track.Count - 2; index >= 0; index--)
+        {
+            var deltaX = track[^1].X - track[index].X;
+            var deltaY = track[^1].Y - track[index].Y;
+            if ((deltaX * deltaX) + (deltaY * deltaY) < 0.0025) continue;
+            return NormalizeBearing(Math.Atan2(deltaX, deltaY) * 180 / Math.PI);
+        }
+        return null;
+    }
+
+    private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
 
     private async Task CaptureHistorySample()
     {

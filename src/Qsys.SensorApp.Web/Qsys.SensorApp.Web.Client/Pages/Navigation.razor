@@ -76,7 +76,7 @@
         {
             @foreach (var marker in DistanceMarkers())
             {
-                <circle class="nav-distance-marker" cx="@N(marker.X)" cy="@N(-marker.Y)" r="0.07"><title>Every 0.5 m</title></circle>
+                <circle class="nav-distance-marker" cx="@N(marker.X)" cy="@N(-marker.Y)" r="0.07"><title>Every 1 m</title></circle>
             }
         }
         <circle class="nav-position" cx="@N(DisplayPosition.X)" cy="@N(-DisplayPosition.Y)" r="0.22" />
@@ -194,7 +194,7 @@
     {
         var points = DisplayedTrackPoints;
         var distanceAlongPath = 0d;
-        var nextMarkerDistance = 0.5;
+        var nextMarkerDistance = 1d;
         for (var index = 1; index < points.Length; index++)
         {
             var start = points[index - 1];
@@ -205,7 +205,7 @@
             {
                 var fraction = (nextMarkerDistance - distanceAlongPath) / segmentLength;
                 yield return start + (segment * fraction);
-                nextMarkerDistance += 0.5;
+                nextMarkerDistance += 1d;
             }
             distanceAlongPath += segmentLength;
         }

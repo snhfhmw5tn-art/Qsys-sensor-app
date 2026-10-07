@@ -121,33 +121,24 @@ public sealed class DeadReckoningEngine
 
     private void UpdateHeading(SensorReading reading, double elapsedSeconds)
     {
+        if (reading.RotationRateDegreesPerSecond is { } rate && _headingDegrees is { } current)
+            _headingDegrees = Normalize(current + (rate.Z * elapsedSeconds));
+
         if (reading.HeadingDegrees is { } absoluteHeading && reading.OrientationIsAbsolute)
         {
             var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees);
             if (_headingDegrees is null) _headingDegrees = relativeHeading;
-            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.5));
+            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
             _headingQuality = 1;
         }
-        else if (GetVerticalHeadingRate(reading) is { } headingRate && _headingDegrees is { } current)
+        else if (reading.RotationRateDegreesPerSecond is not null)
         {
-            // Project the device-relative angular velocity onto local vertical.
-            // This keeps the heading rate valid while the device is pitched or rolled.
-            _headingDegrees = Normalize(current + (headingRate * elapsedSeconds));
             _headingQuality = Math.Max(_headingQuality * 0.995, 0.35);
         }
         else
         {
             _headingQuality *= 0.999;
         }
-    }
-
-    private static double? GetVerticalHeadingRate(SensorReading reading)
-    {
-        if (reading.RotationRateDegreesPerSecond is not { } rate || reading.AccelerationIncludingGravity is not { } gravity) return null;
-        if (gravity.Magnitude < 6 || gravity.Magnitude > 13) return null;
-
-        // Without a reliable gravity vector, device Z is not a safe proxy for world vertical.
-        return ((rate.X * gravity.X) + (rate.Y * gravity.Y) + (rate.Z * gravity.Z)) / gravity.Magnitude;
     }
 
     private void UpdateAltitude(double? pressureKilopascals)

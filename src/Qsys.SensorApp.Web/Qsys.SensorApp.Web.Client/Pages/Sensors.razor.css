@@ -6,6 +6,7 @@
 .sensor-start { padding: .55rem .85rem; color: #11211f; background: #7bd4c0; border: 1px solid #7bd4c0; border-radius: 6px; cursor: pointer; text-decoration: none; }
 .sensor-start:disabled { opacity: .5; cursor: default; }
 .sensor-message { padding: .65rem .85rem; color: #a5d9ca; background: #14271f; border: 1px solid #31594b; border-radius: 6px; font-size: .84rem; }
+.sensor-message-error { color: #ffd0c9; background: #321e20; border-color: #75413f; }
 .sensor-grid { display: grid; gap: .75rem; margin-bottom: 1.5rem; }
 .sensor-card { align-items: flex-start; color: #e9edf6; }
 .sensor-card>div strong { color: #e9edf6; }

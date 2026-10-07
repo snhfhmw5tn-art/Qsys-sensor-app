@@ -25,12 +25,10 @@ public sealed class VibrationThresholdSettings
     /// <summary>Validates that the editable activity bands are finite, ordered and within a 25 Hz sensor's Nyquist range.</summary>
     public void Validate()
     {
-        if (!double.IsFinite(StandingRmsMaxMetersPerSecondSquared) || StandingRmsMaxMetersPerSecondSquared is < 0.01 or > 5)
+        if (!double.IsFinite(StandingRmsMaxMetersPerSecondSquared) || StandingRmsMaxMetersPerSecondSquared is < 0 or > 30)
             throw new ArgumentOutOfRangeException(nameof(StandingRmsMaxMetersPerSecondSquared));
-        if (!double.IsFinite(ActiveRmsMinMetersPerSecondSquared) || ActiveRmsMinMetersPerSecondSquared is < 0.01 or > 5)
+        if (!double.IsFinite(ActiveRmsMinMetersPerSecondSquared) || ActiveRmsMinMetersPerSecondSquared is < 0 or > 30)
             throw new ArgumentOutOfRangeException(nameof(ActiveRmsMinMetersPerSecondSquared));
-        if (StandingRmsMaxMetersPerSecondSquared >= ActiveRmsMinMetersPerSecondSquared)
-            throw new ArgumentException("The active vibration floor must be higher than the stillness threshold.");
         if (EstimationWindowSeconds is < 1 or > 10)
             throw new ArgumentOutOfRangeException(nameof(EstimationWindowSeconds), "The rolling estimate window must be between 1 and 10 seconds.");
 

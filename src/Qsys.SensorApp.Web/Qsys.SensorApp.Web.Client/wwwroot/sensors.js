@@ -107,6 +107,9 @@ export async function start(dotnet, requestedFrequencyHz) {
         const onOrientation = (event) => {
             const hasCompass = Number.isFinite(event.webkitCompassHeading);
             const absolute = event.absolute === true || hasCompass;
+            session.latest.deviceForwardHeadingDegrees = hasCompass
+                ? normalize(event.webkitCompassHeading)
+                : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
             const hasEulerOrientation = [event.alpha, event.beta, event.gamma].every(Number.isFinite);
             session.latest.headingDegrees = hasCompass
                 ? normalize(event.webkitCompassHeading)
@@ -216,6 +219,7 @@ function emit(session) {
         magneticFieldY: session.latest.magneticFieldMicrotesla?.y ?? null,
         magneticFieldZ: session.latest.magneticFieldMicrotesla?.z ?? null,
         headingDegrees: session.latest.headingDegrees ?? null,
+        deviceForwardHeadingDegrees: session.latest.deviceForwardHeadingDegrees ?? null,
         pitchDegrees: session.latest.pitchDegrees ?? null,
         rollDegrees: session.latest.rollDegrees ?? null,
         orientationIsAbsolute: session.latest.orientationIsAbsolute ?? false,

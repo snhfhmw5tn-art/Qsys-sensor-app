@@ -39,7 +39,7 @@
 
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
-    <div><span class="eyebrow">DEVICE DIRECTION · RED</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p><small>Tilt compensated device heading</small></div>
+    <div><span class="eyebrow">DEVICE FORWARD · RED</span><p>@(DisplayHeading?.ToString("0.0") ?? "—")°</p><small>Compass direction toward the top of the device</small></div>
     <div><span class="eyebrow">TRAVEL DIRECTION · GREEN</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction derived from the position track</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
@@ -118,7 +118,8 @@
     private const int MaximumHistorySamples = 5000;
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
-    private double? DisplayHeading => ReplaySample is { } sample ? sample.HeadingDegrees : state.HeadingDegrees;
+    private double? deviceForwardHeading;
+    private double? DisplayHeading => ReplaySample is { } sample ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees : deviceForwardHeading;
     private double? DisplayBearing => GetDisplayedBearing();
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
@@ -246,6 +247,7 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
+            deviceForwardHeading = null;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
             state = engine.State;
@@ -289,6 +291,7 @@
             var reading = new SensorReading(DateTimeOffset.FromUnixTimeMilliseconds((long)millis), Number(sample, "samplingIntervalMilliseconds") ?? 0,
                 Vector(sample, "acceleration"), Vector(sample, "accelerationIncludingGravity"), Vector(sample, "rotationRate"), Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
+            deviceForwardHeading = Number(sample, "deviceForwardHeadingDegrees");
             state = engine.Process(reading);
             if (reading.PressureKilopascals is > 0)
             {
@@ -330,7 +333,8 @@
     {
         lastHistoryCapture = state.TimestampUtc;
         var sample = new DigitalTwinSample(currentSessionId, state.TimestampUtc, state.PositionMeters.X, state.PositionMeters.Y, state.PositionMeters.Z,
-            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence);
+            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence,
+            deviceForwardHeading);
         twinHistory.Add(sample);
         if (twinHistory.Count > MaximumHistorySamples) twinHistory.RemoveAt(0);
         heatmapCells.Clear(); heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));
@@ -338,7 +342,7 @@
         {
             var saved = await drawingModule.InvokeAsync<bool>("appendDigitalTwinSample", new
             {
-                sessionId = sample.SessionId, timestampUtc = sample.TimestampUtc, sample.X, sample.Y, sample.Z, sample.HeadingDegrees,
+                sessionId = sample.SessionId, timestampUtc = sample.TimestampUtc, sample.X, sample.Y, sample.Z, sample.HeadingDegrees, sample.DeviceForwardHeadingDegrees,
                 sample.SpeedMetersPerSecond, sample.StepCount, sample.Confidence, sample.PositionUncertaintyMeters,
                 activity = sample.Activity.ToString(), sample.ActivityConfidence
             });
@@ -350,7 +354,9 @@
     private static bool IsValidSample(DigitalTwinSample sample) => sample is not null && sample.SessionId != Guid.Empty && double.IsFinite(sample.X) && double.IsFinite(sample.Y) && double.IsFinite(sample.Z) &&
         double.IsFinite(sample.SpeedMetersPerSecond) && sample.SpeedMetersPerSecond >= 0 && sample.StepCount >= 0 &&
         double.IsFinite(sample.Confidence) && sample.Confidence is >= 0 and <= 1 && double.IsFinite(sample.PositionUncertaintyMeters) && sample.PositionUncertaintyMeters >= 0 &&
-        double.IsFinite(sample.ActivityConfidence) && sample.ActivityConfidence is >= 0 and <= 1 && (sample.HeadingDegrees is null || double.IsFinite(sample.HeadingDegrees.Value)) && Enum.IsDefined(sample.Activity);
+        double.IsFinite(sample.ActivityConfidence) && sample.ActivityConfidence is >= 0 and <= 1 &&
+        (sample.HeadingDegrees is null || double.IsFinite(sample.HeadingDegrees.Value)) &&
+        (sample.DeviceForwardHeadingDegrees is null || double.IsFinite(sample.DeviceForwardHeadingDegrees.Value)) && Enum.IsDefined(sample.Activity);
 
     private async Task OnViewModeChanged()
     {

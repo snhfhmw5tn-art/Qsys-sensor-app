@@ -120,6 +120,9 @@
 
     private enum TwinViewMode { Live, Heatmap, Replay }
     private const int MaximumHistorySamples = 5000;
+    // Hide only the green indicator during a sharp turn; step detection stays enabled so normal walking cadence is preserved.
+    private const double TravelIndicatorTurnThresholdDegreesPerSecond = 90;
+    private const double TravelIndicatorSettleSeconds = 0.5;
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? deviceForwardHeading;
@@ -135,7 +138,7 @@
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
         : !IsTurnSuppressed && IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
-    private bool IsTurnSuppressed => lastTurningInPlaceAt is { } turnAt && (state.TimestampUtc - turnAt).TotalSeconds <= 0.75;
+    private bool IsTurnSuppressed => lastTurningInPlaceAt is { } turnAt && (state.TimestampUtc - turnAt).TotalSeconds <= TravelIndicatorSettleSeconds;
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -332,8 +335,8 @@
             var timestamp = DateTimeOffset.FromUnixTimeMilliseconds((long)millis);
             var rotationRate = Vector(sample, "rotationRate");
             var gravity = Vector(sample, "accelerationIncludingGravity");
-            // Suppress the green travel indicator during a turn-in-place and for the same settling period as step detection.
-            if (GetVerticalTurnRate(rotationRate, gravity) is { } turnRate && Math.Abs(turnRate) >= 25)
+            // A sharp in-place turn can transiently fool the motion classifier, so hide the green line briefly without stopping step detection.
+            if (GetVerticalTurnRate(rotationRate, gravity) is { } turnRate && Math.Abs(turnRate) >= TravelIndicatorTurnThresholdDegreesPerSecond)
                 lastTurningInPlaceAt = timestamp;
             var reading = new SensorReading(timestamp, Number(sample, "samplingIntervalMilliseconds") ?? 0,
                 Vector(sample, "acceleration"), gravity, rotationRate, Vector(sample, "magneticField"),

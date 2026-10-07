@@ -110,7 +110,8 @@ export async function start(dotnet, requestedFrequencyHz) {
             // Preserve the device's physical top-edge direction for the red indicator; this is intentionally separate from movement heading.
             session.latest.deviceForwardHeadingDegrees = hasCompass
                 ? normalize(event.webkitCompassHeading)
-                : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
+                // Alpha is still useful for the red device indicator when the browser marks its reference as relative.
+                : Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
             const hasEulerOrientation = [event.alpha, event.beta, event.gamma].every(Number.isFinite);
             // Use the full Euler orientation to compensate the movement bearing for how the device is tilted in the hand.
             session.latest.headingDegrees = hasCompass

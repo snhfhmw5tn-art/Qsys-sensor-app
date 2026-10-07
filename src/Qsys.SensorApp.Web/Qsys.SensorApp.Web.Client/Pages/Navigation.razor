@@ -110,7 +110,6 @@
     private bool isReplayPlaying;
     private bool isDisposed;
     private bool isRunning;
-    private bool positionAndHeadingWereReset;
     private bool hasAltitudeReading;
     private double? deviceForwardHeading;
     private double? deviceScreenOrientationDegrees;
@@ -120,11 +119,9 @@
         get
         {
             var rawHeading = ReplaySample is { } sample
-                ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees
-                : deviceForwardHeading ?? state.HeadingDegrees;
-            return rawHeading is { } heading
-                ? NormalizeBearing(heading - (ReplaySample is null ? deviceHeadingZeroOffsetDegrees ?? 0 : 0))
-                : positionAndHeadingWereReset && viewMode == TwinViewMode.Live ? 0 : null;
+                ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees ?? 0
+                : deviceForwardHeading ?? state.HeadingDegrees ?? initialHeading;
+            return NormalizeBearing(rawHeading - (ReplaySample is null ? deviceHeadingZeroOffsetDegrees ?? 0 : 0));
         }
     }
     private double minimumElevation;
@@ -277,7 +274,6 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
-            positionAndHeadingWereReset = false;
             deviceForwardHeading = null;
             deviceScreenOrientationDegrees = null;
             deviceHeadingZeroOffsetDegrees = null;
@@ -312,7 +308,6 @@
         track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
         currentSessionId = Guid.NewGuid();
         lastHistoryCapture = null;
-        positionAndHeadingWereReset = true;
         viewMode = TwinViewMode.Live;
         message = "Position reset. The red direction indicator points up; distance starts from zero.";
     }

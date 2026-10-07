@@ -123,12 +123,14 @@
     private DigitalTwinSample? ReplaySample => viewMode == TwinViewMode.Replay && twinHistory.Count > 0 ? twinHistory[Math.Clamp(replayIndex, 0, twinHistory.Count - 1)] : null;
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
     private double? deviceForwardHeading;
+    // Each line has its own zero offset so calibrating one reference cannot silently rotate the other.
     private double? redDirectionOffsetDegrees;
     private double? greenDirectionOffsetDegrees;
     private double? DisplayHeading => AdjustBearing(ReplaySample is { } sample ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees : deviceForwardHeading, redDirectionOffsetDegrees);
     private double? DisplayBearing => HasConfirmedMovement
         ? AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees)
         : null;
+    // Heading changes alone do not prove walking; require cadence, nonzero speed and a movement-classified activity before drawing green.
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
         : IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
@@ -288,6 +290,7 @@
     private void SetRedDirectionToZero()
     {
         if (deviceForwardHeading is not { } heading) return;
+        // Calibrate the physical device indicator and the movement engine's heading reference together; green has a separate control.
         redDirectionOffsetDegrees = heading;
         if (engine?.ResetHeadingToForward() == true) state = engine.State;
         message = "Red device direction set to 0°. Navigation now uses the current direction as its forward reference.";
@@ -296,6 +299,7 @@
     private void SetGreenDirectionToZero()
     {
         if (DisplayBearing is null || GetDisplayedBearing() is not { } rawBearing) return;
+        // Rebase only the displayed travel bearing; retain the red device direction and underlying recorded track.
         greenDirectionOffsetDegrees = rawBearing;
         message = "Green travel direction set to 0°. Red device direction is unchanged.";
     }

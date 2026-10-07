@@ -8,6 +8,7 @@ public sealed class StepDetector
     private const double GravityMetersPerSecondSquared = 9.80665;
     private const double BaselineTimeConstantSeconds = 0.8;
     private const double MinimumStepIntervalSeconds = 0.28;
+    // Fast device turns can create acceleration peaks that resemble steps; suppress those peaks to avoid fake movement.
     private const double DeviceTurnSuppressionDegreesPerSecond = 100;
     private double? _baseline;
     private double? _previousFiltered;
@@ -53,6 +54,7 @@ public sealed class StepDetector
         var detected = false;
         var stepInterval = 0d;
         var peak = _previousFiltered ?? 0;
+        // Rotation is independent of walking translation, so reject a candidate peak while the device is being turned quickly.
         var deviceIsTurning = reading.RotationRateDegreesPerSecond is { } rotation &&
             rotation.Magnitude >= DeviceTurnSuppressionDegreesPerSecond;
         if (!deviceIsTurning && _previousPreviousFiltered is { } beforePrevious && _previousFiltered is { } previousFiltered &&

@@ -56,6 +56,7 @@ public sealed class DeadReckoningEngine
     public bool ResetHeadingToForward()
     {
         if (_headingDegrees is not { } currentHeading) return false;
+        // Keep map coordinates fixed, but subtract this heading from future compass readings so this direction becomes local north.
         _headingOffsetDegrees = Normalize(_headingOffsetDegrees + currentHeading);
         _headingDegrees = 0;
         State = State with { HeadingDegrees = 0 };
@@ -121,6 +122,7 @@ public sealed class DeadReckoningEngine
 
     private void UpdateHeading(SensorReading reading, double elapsedSeconds)
     {
+        // Gyroscope axes rotate with the device; project angular velocity onto gravity to estimate world-vertical yaw while tilted.
         if (GetVerticalHeadingRate(reading) is { } headingRate && _headingDegrees is { } current)
             _headingDegrees = Normalize(current + (headingRate * elapsedSeconds));
 
@@ -128,6 +130,7 @@ public sealed class DeadReckoningEngine
         {
             var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees);
             if (_headingDegrees is null) _headingDegrees = relativeHeading;
+            // Blend toward the absolute compass heading to reduce sensor jitter without snapping the navigation direction.
             else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
             _headingQuality = 1;
         }
@@ -143,6 +146,7 @@ public sealed class DeadReckoningEngine
 
     private static double? GetVerticalHeadingRate(SensorReading reading)
     {
+        // Ignore missing or implausible gravity; without it a device-axis gyro rate cannot be safely tilt-compensated.
         if (reading.RotationRateDegreesPerSecond is not { } rate || reading.AccelerationIncludingGravity is not { } gravity) return null;
         if (gravity.Magnitude < 6 || gravity.Magnitude > 13) return null;
         return ((rate.X * gravity.X) + (rate.Y * gravity.Y) + (rate.Z * gravity.Z)) / gravity.Magnitude;

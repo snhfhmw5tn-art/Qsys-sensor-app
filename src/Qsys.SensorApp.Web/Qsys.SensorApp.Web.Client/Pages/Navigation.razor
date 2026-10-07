@@ -26,7 +26,7 @@
     }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
-<p class="small-note">The red line shows the direction of movement based on the recorded position track. Phone orientation does not rotate the displayed travel direction.</p>
+<p class="small-note">The red line shows the direction the top edge of the device points. The blue track shows the estimated movement path.</p>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
 
 <section class="twin-controls">
@@ -43,7 +43,7 @@
 
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
-    <div><span class="eyebrow">TRAVEL DIRECTION · RED</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction derived from the position track</small></div>
+    <div><span class="eyebrow">DEVICE DIRECTION · RED</span><p>@(DisplayDeviceHeading?.ToString("0.0") ?? "—")°</p><small>Direction the top edge of the device points</small></div>
     <div><span class="eyebrow">DRAWN DISTANCE</span><p>@DrawnDistanceMeters.ToString("0.00") m</p><small>Accumulated length of the displayed track</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
@@ -81,13 +81,13 @@
         }
         <circle class="nav-position" cx="@N(DisplayPosition.X)" cy="@N(-DisplayPosition.Y)" r="0.22" />
         <text class="nav-distance-label" x="@N(DisplayPosition.X + 0.32)" y="@N(-DisplayPosition.Y - 0.22)" dominant-baseline="middle">@DrawnDistanceMeters.ToString("0.0") m</text>
-        @if (DisplayBearing is { } bearing)
+        @if (DisplayDeviceHeading is { } bearing)
         {
             var angle = bearing * Math.PI / 180;
             <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
         }
     </svg>
-    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: travel direction</span></div>
+    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: device direction</span></div>
     <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Bearing 0° points north; east is +X. Travel direction appears after movement.")</p>
 </section>
 
@@ -112,6 +112,21 @@
     private bool isRunning;
     private bool positionAndHeadingWereReset;
     private bool hasAltitudeReading;
+    private double? deviceForwardHeading;
+    private double? deviceScreenOrientationDegrees;
+    private double? deviceHeadingZeroOffsetDegrees;
+    private double? DisplayDeviceHeading
+    {
+        get
+        {
+            var rawHeading = ReplaySample is { } sample
+                ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees
+                : deviceForwardHeading ?? state.HeadingDegrees;
+            return rawHeading is { } heading
+                ? NormalizeBearing(heading - (ReplaySample is null ? deviceHeadingZeroOffsetDegrees ?? 0 : 0))
+                : positionAndHeadingWereReset && viewMode == TwinViewMode.Live ? 0 : null;
+        }
+    }
     private double minimumElevation;
     private double maximumElevation;
     private double initialX;
@@ -130,13 +145,6 @@
         : track.ToArray();
     private double DrawnDistanceMeters => GetPathLength(DisplayedTrackPoints);
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
-    private double? DisplayBearing => HasConfirmedMovement
-        ? GetDisplayedBearing()
-        : positionAndHeadingWereReset && viewMode == TwinViewMode.Live ? 0 : null;
-    // Heading changes alone do not prove walking; require cadence, speed and walking activity to avoid drawing while turning in place.
-    private bool HasConfirmedMovement => ReplaySample is { } sample
-        ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
-        : IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -144,35 +152,7 @@
         ? "Relative to the session’s first barometer reading"
         : hasAltitudeReading ? $"Session range: {minimumElevation:0.00} to {maximumElevation:0.00} m" : "Requires a device barometer; 0.00 m is not assumed when unavailable.";
     private double ReplayActivityConfidence => (ReplaySample?.ActivityConfidence ?? state.Activity.Confidence) * 100;
-    private double? GetDisplayedBearing()
-    {
-        if (viewMode == TwinViewMode.Replay && ReplaySample is { } replay)
-        {
-            for (var index = Math.Min(replayIndex - 1, twinHistory.Count - 1); index >= 0; index--)
-            {
-                var previous = twinHistory[index];
-                if (previous.SessionId != replay.SessionId) continue;
-                var deltaX = replay.X - previous.X;
-                var deltaY = replay.Y - previous.Y;
-                if ((deltaX * deltaX) + (deltaY * deltaY) < 0.0025) continue;
-                return NormalizeBearing(Math.Atan2(deltaX, deltaY) * 180 / Math.PI);
-            }
-            return null;
-        }
-
-        for (var index = track.Count - 2; index >= 0; index--)
-        {
-            var deltaX = track[^1].X - track[index].X;
-            var deltaY = track[^1].Y - track[index].Y;
-            if ((deltaX * deltaX) + (deltaY * deltaY) < 0.0025) continue;
-            return NormalizeBearing(Math.Atan2(deltaX, deltaY) * 180 / Math.PI);
-        }
-        return null;
-    }
-
     private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
-    private static bool IsMoving(double speed, int stepCount, ActivityType activity) =>
-        speed >= 0.15 && stepCount >= 2 && activity is ActivityType.Walking or ActivityType.Running or ActivityType.Stairs;
 
     private static double GetPathLength(IReadOnlyList<Vector2> points)
     {
@@ -298,6 +278,9 @@
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
             positionAndHeadingWereReset = false;
+            deviceForwardHeading = null;
+            deviceScreenOrientationDegrees = null;
+            deviceHeadingZeroOffsetDegrees = null;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
             state = engine.State;
@@ -322,6 +305,8 @@
 
         // Reset both the engine's local origin and the visible track so the new red arrow starts by pointing north.
         engine.ResetPositionAndHeading(new Vector3(initialX, initialY, state.PositionMeters.Z));
+        // Use the device's current forward bearing as local north at the reset point.
+        deviceHeadingZeroOffsetDegrees = deviceForwardHeading ?? state.HeadingDegrees;
         state = engine.State;
         track.Clear();
         track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
@@ -352,6 +337,8 @@
             var reading = new SensorReading(timestamp, Number(sample, "samplingIntervalMilliseconds") ?? 0,
                 linearAcceleration, gravity, rotationRate, Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
+            deviceForwardHeading = Number(sample, "deviceForwardHeadingDegrees");
+            deviceScreenOrientationDegrees = Number(sample, "deviceScreenOrientationDegrees");
             state = engine.Process(reading);
             if (reading.PressureKilopascals is > 0)
             {
@@ -392,8 +379,12 @@
     private async Task CaptureHistorySample()
     {
         lastHistoryCapture = state.TimestampUtc;
+        var localDeviceHeading = deviceForwardHeading is { } forwardHeading
+            ? NormalizeBearing(forwardHeading - (deviceHeadingZeroOffsetDegrees ?? 0))
+            : state.HeadingDegrees;
         var sample = new DigitalTwinSample(currentSessionId, state.TimestampUtc, state.PositionMeters.X, state.PositionMeters.Y, state.PositionMeters.Z,
-            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence);
+            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence,
+            localDeviceHeading, deviceScreenOrientationDegrees);
         twinHistory.Add(sample);
         if (twinHistory.Count > MaximumHistorySamples) twinHistory.RemoveAt(0);
         heatmapCells.Clear(); heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));

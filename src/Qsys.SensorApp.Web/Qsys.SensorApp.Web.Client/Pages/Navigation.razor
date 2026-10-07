@@ -18,17 +18,15 @@
     <label>Start X (m) <input type="number" step="0.1" @bind="initialX" disabled="@isRunning" /></label>
     <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
     <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
-    <label>Device-to-walk correction (°) <input type="number" min="-180" max="180" step="5" @bind="deviceToTravelOffsetDegrees" disabled="@isRunning" /></label>
     <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
     @if (isRunning)
     {
-        <button class="quiet-button" @onclick="SetRedDirectionToZero" disabled="@(deviceScreenOrientationDegrees is null || viewMode != TwinViewMode.Live)">Set red device orientation to vertical</button>
-        <button class="quiet-button" @onclick="SetGreenDirectionToZero" disabled="@(DisplayBearing is null || viewMode != TwinViewMode.Live)">Set green travel direction to 0°</button>
+        <button class="quiet-button" @onclick="SetTravelDirectionToZero" disabled="@(DisplayBearing is null || viewMode != TwinViewMode.Live)">Set travel direction to 0°</button>
     }
     @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
-<p class="small-note">If the device’s top edge points 90° to your right while walking forward, enter +90°; if it points left, enter −90°. Red shows device direction; green and the position track use this correction.</p>
+<p class="small-note">The red line shows the direction of movement based on the recorded position track. Phone orientation does not rotate the displayed travel direction.</p>
 @if (!string.IsNullOrWhiteSpace(message)) { <p class="small-note">@message</p> }
 
 <section class="twin-controls">
@@ -45,8 +43,7 @@
 
 <section class="about-panel navigation-stats">
     <div><span class="eyebrow">POSITION · X / Y / Z</span><p>@DisplayPosition.X.ToString("0.00") / @DisplayPosition.Y.ToString("0.00") / @DisplayPosition.Z.ToString("0.00") m</p></div>
-    <div><span class="eyebrow">DEVICE ORIENTATION · RED</span><p>@(DisplayHeading?.ToString("0") ?? "—")°</p><small>Portrait is vertical; landscape is horizontal</small></div>
-    <div><span class="eyebrow">TRAVEL DIRECTION · GREEN</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction derived from the position track</small></div>
+    <div><span class="eyebrow">TRAVEL DIRECTION · RED</span><p>@(DisplayBearing?.ToString("0.0") ?? "—")°</p><small>Direction derived from the position track</small></div>
     <div><span class="eyebrow">DRAWN DISTANCE</span><p>@DrawnDistanceMeters.ToString("0.00") m</p><small>Accumulated length of the displayed track</small></div>
     <div><span class="eyebrow">ELEVATION CHANGE · BAROMETER</span><p>@ElevationDisplay</p><small>@ElevationDetail</small></div>
     <div><span class="eyebrow">SPEED · STEPS</span><p>@(ReplaySample?.SpeedMetersPerSecond.ToString("0.00") ?? state.SpeedMetersPerSecond.ToString("0.00")) m/s · @(ReplaySample?.StepCount ?? state.StepCount)</p></div>
@@ -84,18 +81,13 @@
         }
         <circle class="nav-position" cx="@N(DisplayPosition.X)" cy="@N(-DisplayPosition.Y)" r="0.22" />
         <text class="nav-distance-label" x="@N(DisplayPosition.X + 0.32)" y="@N(-DisplayPosition.Y - 0.22)" dominant-baseline="middle">@DrawnDistanceMeters.ToString("0.0") m</text>
-        @if (DisplayHeading is { } heading)
-        {
-            var angle = heading * Math.PI / 180;
-            <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
-        }
         @if (DisplayBearing is { } bearing)
         {
             var angle = bearing * Math.PI / 180;
-            <line class="nav-bearing" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
+            <line class="nav-heading" x1="@N(DisplayPosition.X)" y1="@N(-DisplayPosition.Y)" x2="@N(DisplayPosition.X + Math.Sin(angle))" y2="@N(-DisplayPosition.Y - Math.Cos(angle))" />
         }
     </svg>
-    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: device direction</span><span><i class="legend-bearing"></i>Green: travel direction</span></div>
+    <div class="navigation-map-legend"><span><i class="legend-device"></i>Red: travel direction</span></div>
     <p>@(viewMode == TwinViewMode.Heatmap ? "Warmer cells indicate more recorded position samples. Data is stored in this browser only." : viewMode == TwinViewMode.Replay ? "Replay is selected from this browser's recorded local history." : "Position uses a local metre-based frame. Bearing 0° points north; east is +X. Travel direction appears after movement.")</p>
 </section>
 
@@ -124,7 +116,7 @@
     private double initialX;
     private double initialY;
     private double initialHeading;
-    private double deviceToTravelOffsetDegrees;
+    private double? travelDirectionOffsetDegrees;
     private double stepLength = 0.72;
     private string mapMessage = "Loading saved map…";
     private string? message;
@@ -138,19 +130,11 @@
         : track.ToArray();
     private double DrawnDistanceMeters => GetPathLength(DisplayedTrackPoints);
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
-    private double? deviceForwardHeading;
-    private double? deviceScreenOrientationDegrees;
     private bool turningWithoutTranslation;
-    // Each line has its own zero offset so calibrating one reference cannot silently rotate the other.
-    private double? redDirectionOffsetDegrees;
-    private double? greenDirectionOffsetDegrees;
-    private double? DisplayHeading => AdjustBearing(ReplaySample is { } sample
-        ? sample.DeviceScreenOrientationDegrees
-        : deviceScreenOrientationDegrees, redDirectionOffsetDegrees);
     private double? DisplayBearing => HasConfirmedMovement
-        ? AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees)
+        ? AdjustBearing(GetDisplayedBearing(), travelDirectionOffsetDegrees)
         : null;
-    // Heading changes alone do not prove walking; require cadence, speed and walking activity, and hide green when gyro lacks translation evidence.
+    // Heading changes alone do not prove walking; require cadence, speed and walking activity to avoid drawing while turning in place.
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
         : !turningWithoutTranslation && IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
@@ -318,12 +302,8 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
-            engine.SetDeviceToTravelOffsetDegrees(deviceToTravelOffsetDegrees);
-            deviceForwardHeading = null;
-            deviceScreenOrientationDegrees = null;
             turningWithoutTranslation = false;
-            redDirectionOffsetDegrees = null;
-            greenDirectionOffsetDegrees = null;
+            travelDirectionOffsetDegrees = null;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
             state = engine.State;
@@ -342,20 +322,12 @@
         }
     }
 
-    private void SetRedDirectionToZero()
-    {
-        if (deviceScreenOrientationDegrees is not { } heading) return;
-        // Calibrate only the red device-axis indicator; the green travel bearing has its own independent zero control.
-        redDirectionOffsetDegrees = heading;
-        message = "Red device orientation set to vertical. Green travel direction is unchanged.";
-    }
-
-    private void SetGreenDirectionToZero()
+    private void SetTravelDirectionToZero()
     {
         if (DisplayBearing is null || GetDisplayedBearing() is not { } rawBearing) return;
-        // Rebase only the displayed travel bearing; retain the red device direction and underlying recorded track.
-        greenDirectionOffsetDegrees = rawBearing;
-        message = "Green travel direction set to 0°. Red device direction is unchanged.";
+        // Rebase only the displayed walking direction. The observed path and sensor heading stay untouched.
+        travelDirectionOffsetDegrees = rawBearing;
+        message = "Travel direction set to 0°.";
     }
 
     private async Task StopNavigation()
@@ -378,10 +350,8 @@
             var reading = new SensorReading(timestamp, Number(sample, "samplingIntervalMilliseconds") ?? 0,
                 linearAcceleration, gravity, rotationRate, Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
-            // Use the same spatial-motion decision as the step detector, so the green line responds immediately to translation evidence.
+            // Use the same spatial-motion decision as the step detector so the travel indicator stays hidden while turning in place.
             turningWithoutTranslation = StepDetector.IsTurningWithoutTranslation(reading);
-            deviceForwardHeading = Number(sample, "deviceForwardHeadingDegrees");
-            deviceScreenOrientationDegrees = Number(sample, "deviceScreenOrientationDegrees");
             state = engine.Process(reading);
             if (reading.PressureKilopascals is > 0)
             {
@@ -423,8 +393,7 @@
     {
         lastHistoryCapture = state.TimestampUtc;
         var sample = new DigitalTwinSample(currentSessionId, state.TimestampUtc, state.PositionMeters.X, state.PositionMeters.Y, state.PositionMeters.Z,
-            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence,
-            deviceForwardHeading, deviceScreenOrientationDegrees);
+            state.HeadingDegrees, state.SpeedMetersPerSecond, state.StepCount, state.Confidence, state.PositionUncertaintyMeters, state.Activity.Type, state.Activity.Confidence);
         twinHistory.Add(sample);
         if (twinHistory.Count > MaximumHistorySamples) twinHistory.RemoveAt(0);
         heatmapCells.Clear(); heatmapCells.AddRange(HeatmapAggregator.Aggregate(twinHistory));

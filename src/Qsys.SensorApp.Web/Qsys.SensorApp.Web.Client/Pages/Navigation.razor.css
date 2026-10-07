@@ -8,13 +8,11 @@
 .nav-distance-marker { fill: #fff; stroke: #156f9d; stroke-width: .045; }
 .nav-distance-label { fill: #152334; font-size: .2px; font-weight: 700; paint-order: stroke; stroke: #fff; stroke-width: .055px; stroke-linejoin: round; }
 .nav-heading { stroke: #dc4d45; stroke-width: .06; stroke-linecap: round; }
-.nav-bearing { stroke: #18a558; stroke-width: .06; stroke-linecap: round; }
 .navigation-map p { margin: .75rem .25rem .25rem; }
 .navigation-map-legend { display: flex; flex-wrap: wrap; gap: 1rem; padding: .25rem; font-size: .85rem; }
 .navigation-map-legend span { display: inline-flex; align-items: center; gap: .4rem; }
 .navigation-map-legend i { display: inline-block; width: 1.25rem; height: .2rem; border-radius: 2px; }
 .legend-device { background: #dc4d45; }
-.legend-bearing { background: #18a558; }
 .twin-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; padding: 1rem; margin-block: 1rem; background: #fff; border: 1px solid #e1e7ea; border-radius: 12px; }
 .twin-controls label { display: flex; flex-direction: column; gap: .3rem; font-size: .82rem; color: #586b75; }
 .twin-controls .replay-range { min-width: min(320px, 45vw); }

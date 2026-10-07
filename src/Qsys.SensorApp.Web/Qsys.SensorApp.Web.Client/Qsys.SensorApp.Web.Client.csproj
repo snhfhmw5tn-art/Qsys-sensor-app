@@ -9,6 +9,15 @@
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
   </PropertyGroup>
 
+  <Target Name="SetCommitInformationalVersion" BeforeTargets="GenerateAssemblyInfo">
+    <Exec Command="git rev-parse --short=8 HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitShort" />
+    </Exec>
+    <PropertyGroup Condition="'$(GitCommitShort)' != ''">
+      <InformationalVersion>1.0.0+$(GitCommitShort)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="..\..\Qsys.SensorApp.Shared\Qsys.SensorApp.Shared.csproj" />
     <ProjectReference Include="..\..\Qsys.SensorApp.Core\Qsys.SensorApp.Core.csproj" />

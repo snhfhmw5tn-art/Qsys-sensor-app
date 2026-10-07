@@ -13,9 +13,24 @@
     <Exec Command="git rev-parse --short=8 HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="Low">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitShort" />
     </Exec>
+    <Exec Command="git show -s --date=iso-strict --format=fuller HEAD &gt; $(IntermediateOutputPath)git-commit-info.txt" IgnoreExitCode="true" StandardOutputImportance="Low" />
+    <ReadLinesFromFile File="$(IntermediateOutputPath)git-commit-info.txt">
+      <Output TaskParameter="Lines" ItemName="GitCommitInfoLines" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <GitCommitDateLine Include="@(GitCommitInfoLines)" Condition="$([System.String]::Copy('%(Identity)').StartsWith('CommitDate: '))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <GitCommitDate>@(GitCommitDateLine)</GitCommitDate>
+      <GitCommitDateValue>$([System.String]::Copy('$(GitCommitDate)').Substring(12))</GitCommitDateValue>
+    </PropertyGroup>
     <PropertyGroup Condition="'$(GitCommitShort)' != ''">
       <InformationalVersion>1.0.0+$(GitCommitShort)</InformationalVersion>
     </PropertyGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)GitCommitInfo.g.cs" Overwrite="true" Lines="namespace Qsys.SensorApp.Web.Client { internal static class GitCommitInfo { internal const string Date = &quot;$(GitCommitDateValue)&quot;%3B } }" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)GitCommitInfo.g.cs" />
+    </ItemGroup>
   </Target>
 
   <ItemGroup>

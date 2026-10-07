@@ -8,7 +8,7 @@ namespace Qsys.SensorApp.Core.Navigation;
 public sealed class DeadReckoningEngine
 {
     private const double StandardAtmosphereKilopascals = 101.325;
-    private readonly KalmanPositionFilter _positionFilter;
+    private KalmanPositionFilter _positionFilter;
     private readonly StepDetector _stepDetector;
     private readonly ActivityClassifier _activityClassifier = new();
     private readonly double _stepLengthMeters;
@@ -62,6 +62,25 @@ public sealed class DeadReckoningEngine
         _headingDegrees = 0;
         State = State with { HeadingDegrees = 0 };
         return true;
+    }
+
+    /// <summary>Starts a fresh local track at the supplied position and makes the current forward direction point north.</summary>
+    public void ResetPositionAndHeading(Vector3 positionMeters)
+    {
+        if (!double.IsFinite(positionMeters.X) || !double.IsFinite(positionMeters.Y) || !double.IsFinite(positionMeters.Z))
+            throw new ArgumentOutOfRangeException(nameof(positionMeters));
+
+        // Start a clean coordinate frame so the user can re-anchor the map and walk forward from a visible zero point.
+        _positionFilter = new KalmanPositionFilter(new Vector2(positionMeters.X, positionMeters.Y));
+        _headingOffsetDegrees = Normalize(_headingOffsetDegrees + (_headingDegrees ?? 0));
+        _headingDegrees = 0;
+        _headingQuality = 0.5;
+        _stepDetector.Reset();
+        _activityClassifier.Reset();
+        _lastStepTimestamp = null;
+        _confirmedStepCount = 0;
+        _stepQuality = 0;
+        State = new NavigationState(DateTimeOffset.UtcNow, positionMeters, 0, 0, 0, 0.15, _positionFilter.StandardDeviation, false, null, ActivityEstimate.Unknown);
     }
 
     /// <summary>Processes one timestamped measurement and updates the estimated position.</summary>

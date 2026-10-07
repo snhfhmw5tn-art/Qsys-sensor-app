@@ -19,7 +19,11 @@
     <label>Start Y (m) <input type="number" step="0.1" @bind="initialY" disabled="@isRunning" /></label>
     <label>Heading (°) <input type="number" step="1" @bind="initialHeading" disabled="@isRunning" /></label>
     <label>Step length (m) <input type="number" min="0.2" max="1.5" step="0.01" @bind="stepLength" disabled="@isRunning" /></label>
-    @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
+    @if (isRunning)
+    {
+        <button class="quiet-button" @onclick="ResetPositionAndHeading">Reset position · point up</button>
+        <button class="quiet-button" @onclick="StopNavigation">Stop session</button>
+    }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
 </section>
 <p class="small-note">The red line shows the direction of movement based on the recorded position track. Phone orientation does not rotate the displayed travel direction.</p>
@@ -106,6 +110,7 @@
     private bool isReplayPlaying;
     private bool isDisposed;
     private bool isRunning;
+    private bool positionAndHeadingWereReset;
     private bool hasAltitudeReading;
     private double minimumElevation;
     private double maximumElevation;
@@ -128,7 +133,7 @@
     private bool turningWithoutTranslation;
     private double? DisplayBearing => HasConfirmedMovement
         ? GetDisplayedBearing()
-        : null;
+        : positionAndHeadingWereReset && viewMode == TwinViewMode.Live ? 0 : null;
     // Heading changes alone do not prove walking; require cadence, speed and walking activity to avoid drawing while turning in place.
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
@@ -294,6 +299,7 @@
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
             turningWithoutTranslation = false;
+            positionAndHeadingWereReset = false;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
             state = engine.State;
@@ -310,6 +316,23 @@
         {
             isRunning = false; message = exception.Message;
         }
+    }
+
+    private void ResetPositionAndHeading()
+    {
+        if (engine is null || !isRunning) return;
+
+        // Reset both the engine's local origin and the visible track so the new red arrow starts by pointing north.
+        engine.ResetPositionAndHeading(new Vector3(initialX, initialY, state.PositionMeters.Z));
+        state = engine.State;
+        track.Clear();
+        track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
+        currentSessionId = Guid.NewGuid();
+        lastHistoryCapture = null;
+        turningWithoutTranslation = false;
+        positionAndHeadingWereReset = true;
+        viewMode = TwinViewMode.Live;
+        message = "Position reset. The red direction indicator points up; distance starts from zero.";
     }
 
     private async Task StopNavigation()

@@ -112,13 +112,10 @@ export async function start(dotnet, requestedFrequencyHz) {
                 ? normalize(event.webkitCompassHeading)
                 // Alpha is still useful for the red device indicator when the browser marks its reference as relative.
                 : Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
-            const hasEulerOrientation = [event.alpha, event.beta, event.gamma].every(Number.isFinite);
-            // Use the full Euler orientation to compensate the movement bearing for how the device is tilted in the hand.
+            // Use the compass heading directly; leave the device tilt compensation out of navigation.
             session.latest.headingDegrees = hasCompass
                 ? normalize(event.webkitCompassHeading)
-                : absolute && hasEulerOrientation
-                    ? compassHeading(event.alpha, event.beta, event.gamma)
-                    : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
+                : absolute && Number.isFinite(event.alpha) ? normalize(360 - event.alpha) : null;
             session.latest.pitchDegrees = finite(event.beta);
             session.latest.rollDegrees = finite(event.gamma);
             session.latest.orientationIsAbsolute = absolute;
@@ -295,31 +292,8 @@ function finite(value) {
 function normalize(degrees) {
     return ((degrees % 360) + 360) % 360;
 }
-
 // screen.orientation follows the handset's portrait/landscape rotation: 0° draws the red phone axis vertically, 90° horizontally.
 function getScreenOrientationDegrees() {
     const angle = Number(window.screen?.orientation?.angle ?? window.orientation ?? 0);
     return Number.isFinite(angle) ? normalize(angle) : 0;
-}
-
-// Project the device's screen-facing axis onto the horizontal plane. This movement heading compensates for pitch and roll;
-// the separate deviceForwardHeadingDegrees value remains the red top-edge indicator.
-function compassHeading(alphaDegrees, betaDegrees, gammaDegrees) {
-    if (![alphaDegrees, betaDegrees, gammaDegrees].every(Number.isFinite)) return null;
-
-    const radians = Math.PI / 180;
-    const alpha = alphaDegrees * radians;
-    const beta = betaDegrees * radians;
-    const gamma = gammaDegrees * radians;
-    const sinAlpha = Math.sin(alpha);
-    const cosAlpha = Math.cos(alpha);
-    const sinBeta = Math.sin(beta);
-    const cosBeta = Math.cos(beta);
-    const sinGamma = Math.sin(gamma);
-    const cosGamma = Math.cos(gamma);
-
-    const east = -cosAlpha * sinGamma - sinAlpha * sinBeta * cosGamma;
-    const north = -sinAlpha * sinGamma + cosAlpha * sinBeta * cosGamma;
-    if (Math.hypot(east, north) < 1e-6) return null;
-    return normalize(Math.atan2(east, north) / radians);
 }

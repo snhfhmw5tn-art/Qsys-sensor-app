@@ -139,8 +139,9 @@ public sealed class DeadReckoningEngine
         {
             var relativeHeading = Normalize(absoluteHeading - _headingOffsetDegrees - _deviceToTravelOffsetDegrees);
             if (_headingDegrees is null) _headingDegrees = relativeHeading;
-            // Blend toward the absolute compass heading to reduce sensor jitter without snapping the navigation direction.
-            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.25));
+            // Handheld sway changes the compass heading briefly even when the person keeps walking straight.
+            // A slower circular correction filters that sway while gyro integration still follows intentional turns.
+            else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.1));
             _headingQuality = 1;
         }
         else if (GetVerticalHeadingRate(reading) is not null)

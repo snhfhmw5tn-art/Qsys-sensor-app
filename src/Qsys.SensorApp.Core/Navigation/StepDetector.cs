@@ -8,6 +8,7 @@ public sealed class StepDetector
     private const double GravityMetersPerSecondSquared = 9.80665;
     private const double BaselineTimeConstantSeconds = 0.8;
     private const double MinimumStepIntervalSeconds = 0.28;
+    private const double DeviceTurnSuppressionDegreesPerSecond = 100;
     private double? _baseline;
     private double? _previousFiltered;
     private double? _previousPreviousFiltered;
@@ -52,7 +53,9 @@ public sealed class StepDetector
         var detected = false;
         var stepInterval = 0d;
         var peak = _previousFiltered ?? 0;
-        if (_previousPreviousFiltered is { } beforePrevious && _previousFiltered is { } previousFiltered &&
+        var deviceIsTurning = reading.RotationRateDegreesPerSecond is { } rotation &&
+            rotation.Magnitude >= DeviceTurnSuppressionDegreesPerSecond;
+        if (!deviceIsTurning && _previousPreviousFiltered is { } beforePrevious && _previousFiltered is { } previousFiltered &&
             previousFiltered > beforePrevious && previousFiltered >= filtered && previousFiltered >= ThresholdMetersPerSecondSquared)
         {
             var interval = _lastStepTimestamp is { } priorStep ? (timestamp - priorStep).TotalSeconds : double.PositiveInfinity;

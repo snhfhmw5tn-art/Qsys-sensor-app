@@ -22,7 +22,7 @@
     @if (isRunning)
     {
         <button class="quiet-button" @onclick="SetRedDirectionToZero" disabled="@(deviceForwardHeading is null || viewMode != TwinViewMode.Live)">Set red device direction to 0°</button>
-        <button class="quiet-button" @onclick="SetGreenDirectionToZero" disabled="@(GetDisplayedBearing() is null || viewMode != TwinViewMode.Live)">Set green travel direction to 0°</button>
+        <button class="quiet-button" @onclick="SetGreenDirectionToZero" disabled="@(DisplayBearing is null || viewMode != TwinViewMode.Live)">Set green travel direction to 0°</button>
     }
     @if (isRunning) { <button class="quiet-button" @onclick="StopNavigation">Stop session</button> }
     else { <button class="primary-link" @onclick="StartNavigation">Start navigation</button> }
@@ -126,7 +126,12 @@
     private double? redDirectionOffsetDegrees;
     private double? greenDirectionOffsetDegrees;
     private double? DisplayHeading => AdjustBearing(ReplaySample is { } sample ? sample.DeviceForwardHeadingDegrees ?? sample.HeadingDegrees : deviceForwardHeading, redDirectionOffsetDegrees);
-    private double? DisplayBearing => AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees);
+    private double? DisplayBearing => HasConfirmedMovement
+        ? AdjustBearing(GetDisplayedBearing(), greenDirectionOffsetDegrees)
+        : null;
+    private bool HasConfirmedMovement => ReplaySample is { } sample
+        ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
+        : IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -161,6 +166,8 @@
     }
 
     private static double NormalizeBearing(double degrees) => ((degrees % 360) + 360) % 360;
+    private static bool IsMoving(double speed, int stepCount, ActivityType activity) =>
+        speed >= 0.15 && stepCount >= 2 && activity is ActivityType.Walking or ActivityType.Running or ActivityType.Stairs;
 
     private static double? AdjustBearing(double? bearing, double? offset) => bearing is { } value
         ? NormalizeBearing(value - (offset ?? 0))
@@ -288,8 +295,8 @@
 
     private void SetGreenDirectionToZero()
     {
-        if (GetDisplayedBearing() is not { } bearing) return;
-        greenDirectionOffsetDegrees = bearing;
+        if (DisplayBearing is null || GetDisplayedBearing() is not { } rawBearing) return;
+        greenDirectionOffsetDegrees = rawBearing;
         message = "Green travel direction set to 0°. Red device direction is unchanged.";
     }
 

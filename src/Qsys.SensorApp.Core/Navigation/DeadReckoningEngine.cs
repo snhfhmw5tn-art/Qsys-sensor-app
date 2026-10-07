@@ -128,17 +128,25 @@ public sealed class DeadReckoningEngine
             else _headingDegrees = Normalize(_headingDegrees.Value + (ShortestAngleDelta(_headingDegrees.Value, relativeHeading) * 0.5));
             _headingQuality = 1;
         }
-        else if (reading.RotationRateDegreesPerSecond is { } rate && _headingDegrees is { } current)
+        else if (GetVerticalHeadingRate(reading) is { } headingRate && _headingDegrees is { } current)
         {
-            // Gyroscope axes are device-relative. Do not integrate local yaw when
-            // an absolute, tilt-compensated compass heading is available.
-            _headingDegrees = Normalize(current + (rate.Z * elapsedSeconds));
+            // Project the device-relative angular velocity onto local vertical.
+            // This keeps the heading rate valid while the device is pitched or rolled.
+            _headingDegrees = Normalize(current + (headingRate * elapsedSeconds));
             _headingQuality = Math.Max(_headingQuality * 0.995, 0.35);
         }
         else
         {
             _headingQuality *= 0.999;
         }
+    }
+
+    private static double? GetVerticalHeadingRate(SensorReading reading)
+    {
+        if (reading.RotationRateDegreesPerSecond is not { } rate) return null;
+        if (reading.AccelerationIncludingGravity is not { } gravity || gravity.Magnitude < 1) return rate.Z;
+
+        return ((rate.X * gravity.X) + (rate.Y * gravity.Y) + (rate.Z * gravity.Z)) / gravity.Magnitude;
     }
 
     private void UpdateAltitude(double? pressureKilopascals)

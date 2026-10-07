@@ -88,9 +88,8 @@ export async function start(dotnet, requestedFrequencyHz) {
             const rotation = event.rotationRate;
             if (acceleration) session.latest.acceleration = vector(acceleration.x, acceleration.y, acceleration.z);
             if (gravity) session.latest.accelerationIncludingGravity = vector(gravity.x, gravity.y, gravity.z);
-            // Normalize DeviceMotion's Z-X-Y rate order into our heading convention.
-            // Right turns have a negative gamma rate, while compass heading increases clockwise.
-            if (rotation) session.latest.rotationRateDegreesPerSecond = vector(rotation.beta, rotation.alpha, -rotation.gamma);
+            // Keep DeviceMotion's rotationRate in its documented device X/Y/Z axes.
+            if (rotation) session.latest.rotationRateDegreesPerSecond = vector(rotation.alpha, rotation.beta, rotation.gamma);
             if (Number.isFinite(event.interval) && event.interval > 0) session.latest.sourceInterval = event.interval;
             if (hasMotionMeasurement(session.latest)) {
                 if (session.motionFallbackTimer !== null) {
@@ -159,8 +158,8 @@ function startGenericMotionSensors(session, collection = null) {
     }, collection);
     startGenericSensor(session, "Gyroscope", "gyroscope", (sensor) => {
         const radiansToDegrees = 180 / Math.PI;
-        // In portrait orientation, yaw is around device Y; the navigation engine reads yaw from Z.
-        session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.z * radiansToDegrees, sensor.y * radiansToDegrees);
+        // Generic Gyroscope already reports angular velocity around device X/Y/Z.
+        session.latest.rotationRateDegreesPerSecond = vector(sensor.x * radiansToDegrees, sensor.y * radiansToDegrees, sensor.z * radiansToDegrees);
     }, collection);
 }
 

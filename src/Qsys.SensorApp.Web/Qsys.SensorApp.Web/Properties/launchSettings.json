@@ -20,6 +20,26 @@
         "environmentVariables": {
           "ASPNETCORE_ENVIRONMENT": "Development"
         }
+      },
+      "IIS HTTPS": {
+        "commandName": "IIS",
+        "launchBrowser": true,
+        "launchUrl": "https://SEQSYSLT250409A.qsys.se/",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        }
+      }
+    },
+    "iisSettings": {
+      "windowsAuthentication": false,
+      "anonymousAuthentication": true,
+      "iis": {
+        "applicationUrl": "https://SEQSYSLT250409A.qsys.se/",
+        "sslPort": 0
+      },
+      "iisExpress": {
+        "applicationUrl": "http://localhost:57390/",
+        "sslPort": 44369
       }
     }
   }

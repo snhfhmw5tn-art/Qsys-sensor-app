@@ -32,13 +32,13 @@ public sealed class MovementGate
     public void Configure(MovementGateSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        if (!double.IsFinite(settings.StepPeakThresholdMetersPerSecondSquared) || settings.StepPeakThresholdMetersPerSecondSquared is < 0.1 or > 3)
+        if (!double.IsFinite(settings.StepPeakThresholdMetersPerSecondSquared) || settings.StepPeakThresholdMetersPerSecondSquared is < 0.05 or > 3)
             throw new ArgumentOutOfRangeException(nameof(settings.StepPeakThresholdMetersPerSecondSquared));
         if (settings.StepsToConfirmStart is < 2 or > 6)
             throw new ArgumentOutOfRangeException(nameof(settings.StepsToConfirmStart));
-        if (!double.IsFinite(settings.CadenceVariationTolerance) || settings.CadenceVariationTolerance is < 0.1 or > 1)
+        if (!double.IsFinite(settings.CadenceVariationTolerance) || settings.CadenceVariationTolerance is < 0.01 or > 1)
             throw new ArgumentOutOfRangeException(nameof(settings.CadenceVariationTolerance));
-        if (!double.IsFinite(settings.StopAfterSeconds) || settings.StopAfterSeconds is < 0.5 or > 5)
+        if (!double.IsFinite(settings.StopAfterSeconds) || settings.StopAfterSeconds is < 0.1 or > 5)
             throw new ArgumentOutOfRangeException(nameof(settings.StopAfterSeconds));
         if (!double.IsFinite(settings.TurnRateThresholdDegreesPerSecond) || settings.TurnRateThresholdDegreesPerSecond is < 40 or > 400)
             throw new ArgumentOutOfRangeException(nameof(settings.TurnRateThresholdDegreesPerSecond));

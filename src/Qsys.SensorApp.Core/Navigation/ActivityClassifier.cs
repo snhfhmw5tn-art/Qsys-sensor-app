@@ -46,16 +46,13 @@ public sealed class ActivityClassifier
         var altitudeSamples = _samples.Where(item => item.Altitude is not null).ToArray();
         var altitudeChange = altitudeSamples.Length > 1 ? altitudeSamples[^1].Altitude!.Value - altitudeSamples[0].Altitude!.Value : 0;
         var verticalRate = Math.Abs(altitudeChange) / seconds;
-        // One or two peaks can come from rocking the handset. Require several evenly spaced steps before calling it gait.
-        var hasWalkingCadence = HasStableWalkingCadence(_steps);
-
         if (altitudeSamples.Length > 1 && Math.Abs(altitudeChange) >= 0.45 && cadence < 0.35)
             return new(ActivityType.Elevator, Math.Clamp(0.55 + Math.Abs(altitudeChange) * 0.12, 0.55, 0.9));
-        if (altitudeSamples.Length > 1 && Math.Abs(altitudeChange) >= 0.18 && stepIsRecent && hasWalkingCadence && cadence < 2.7)
+        if (altitudeSamples.Length > 1 && Math.Abs(altitudeChange) >= 0.18 && stepIsRecent && cadence < 2.7)
             return new(ActivityType.Stairs, Math.Clamp(0.5 + Math.Abs(altitudeChange) * 0.25 + Math.Min(cadence, 1.5) * 0.08, 0.5, 0.88));
-        if (stepIsRecent && hasWalkingCadence && cadence >= 2.15)
+        if (stepIsRecent && cadence >= 2.15)
             return new(ActivityType.Running, Math.Clamp(0.5 + (cadence - 2.15) * 0.18 + Math.Min(accelerationRms, 2) * 0.08, 0.5, 0.92));
-        if (stepIsRecent && hasWalkingCadence && cadence >= 0.45)
+        if (stepIsRecent && cadence >= 0.45)
             return new(ActivityType.Walking, Math.Clamp(0.48 + Math.Min(cadence, 1.8) * 0.18, 0.48, 0.82));
         var possibleTruck = !stepIsRecent && recentAcceleration.Length >= 8 && accelerationVariation >= 0.18 && accelerationVariation < 1.8 && verticalRate < 0.08;
         if (possibleTruck)
@@ -79,18 +76,5 @@ public sealed class ActivityClassifier
 
     private static double Rms(IEnumerable<double> values) { var data = values.ToArray(); return data.Length == 0 ? 0 : Math.Sqrt(data.Sum(value => value * value) / data.Length); }
     private static double Variation(IEnumerable<double> values) { var data = values.ToArray(); if (data.Length < 2) return 0; var mean = data.Average(); return Math.Sqrt(data.Sum(value => (value - mean) * (value - mean)) / data.Length); }
-    private static bool HasStableWalkingCadence(IEnumerable<DateTimeOffset> timestamps)
-    {
-        var recent = timestamps.TakeLast(3).ToArray();
-        if (recent.Length < 3) return false;
-
-        var firstInterval = (recent[1] - recent[0]).TotalSeconds;
-        var secondInterval = (recent[2] - recent[1]).TotalSeconds;
-        if (firstInterval is < 0.3 or > 1.5 || secondInterval is < 0.3 or > 1.5) return false;
-
-        // Compare neighbouring intervals so isolated taps and irregular phone shakes do not establish a gait cadence.
-        var meanInterval = (firstInterval + secondInterval) / 2;
-        return Math.Abs(firstInterval - secondInterval) <= meanInterval * 0.4;
-    }
     private sealed record MotionSample(DateTimeOffset Timestamp, double? Acceleration, double? Rotation, double? Altitude);
 }

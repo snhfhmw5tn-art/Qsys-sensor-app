@@ -8,13 +8,9 @@ public sealed class StepDetector
     private const double GravityMetersPerSecondSquared = 9.80665;
     private const double BaselineTimeConstantSeconds = 0.8;
     private const double MinimumStepIntervalSeconds = 0.28;
-    // Use the full gyro magnitude so roll/pitch rotations around the handset's own axis are detected too.
-    private const double InPlaceTurnThresholdDegreesPerSecond = 45;
-    private const double MinimumTranslationAccelerationMetersPerSecondSquared = 0.65;
     private double? _baseline;
     private double? _previousFiltered;
     private double? _previousPreviousFiltered;
-    private bool _previousSampleWasTurningWithoutTranslation;
     private DateTimeOffset? _previousTimestamp;
     private DateTimeOffset? _lastStepTimestamp;
 
@@ -30,16 +26,6 @@ public sealed class StepDetector
     public double ThresholdMetersPerSecondSquared { get; }
     /// <summary>Gets the number of detected steps since reset.</summary>
     public int StepCount { get; private set; }
-
-    /// <summary>Returns true when gyro indicates a turn but linear acceleration does not indicate translation.</summary>
-    public static bool IsTurningWithoutTranslation(SensorReading reading)
-    {
-        ArgumentNullException.ThrowIfNull(reading);
-        var rotationRate = reading.RotationRateDegreesPerSecond?.Magnitude;
-        var hasTranslationAcceleration = reading.Acceleration is { } linearAcceleration &&
-            linearAcceleration.Magnitude >= MinimumTranslationAccelerationMetersPerSecondSquared;
-        return rotationRate is { } rate && rate >= InPlaceTurnThresholdDegreesPerSecond && !hasTranslationAcceleration;
-    }
 
     /// <summary>Processes one measurement and returns its step event, if a new step was detected.</summary>
     public StepDetection Update(SensorReading reading)
@@ -63,14 +49,10 @@ public sealed class StepDetector
         var filtered = magnitude - _baseline.Value;
         _baseline += smoothing * filtered;
 
-        // This is a per-sample gyro/accelerometer comparison, not a time-based cooldown: real step acceleration still passes during a turn.
-        var turnWithoutTranslation = IsTurningWithoutTranslation(reading);
         var detected = false;
         var stepInterval = 0d;
         var peak = _previousFiltered ?? 0;
-        // Associate the turn check with the peak sample itself. Checking only the following sample lets a rotation
-        // create an acceleration peak that is accepted one sensor frame after the hand has stopped turning.
-        if (!turnWithoutTranslation && !_previousSampleWasTurningWithoutTranslation && _previousPreviousFiltered is { } beforePrevious && _previousFiltered is { } previousFiltered &&
+        if (_previousPreviousFiltered is { } beforePrevious && _previousFiltered is { } previousFiltered &&
             previousFiltered > beforePrevious && previousFiltered >= filtered && previousFiltered >= ThresholdMetersPerSecondSquared)
         {
             var interval = _lastStepTimestamp is { } priorStep ? (timestamp - priorStep).TotalSeconds : double.PositiveInfinity;
@@ -85,7 +67,6 @@ public sealed class StepDetector
 
         _previousPreviousFiltered = _previousFiltered;
         _previousFiltered = filtered;
-        _previousSampleWasTurningWithoutTranslation = turnWithoutTranslation;
         _previousTimestamp = timestamp;
         return detected
             ? new StepDetection(true, StepCount, timestamp, stepInterval, Math.Clamp(0.55 + ((peak - ThresholdMetersPerSecondSquared) / 3), 0, 1))
@@ -98,12 +79,10 @@ public sealed class StepDetector
         _baseline = null;
         _previousFiltered = null;
         _previousPreviousFiltered = null;
-        _previousSampleWasTurningWithoutTranslation = false;
         _previousTimestamp = null;
         _lastStepTimestamp = null;
         StepCount = 0;
     }
-
 }
 
 /// <summary>Result of one step-detection update.</summary>

@@ -130,14 +130,13 @@
         : track.ToArray();
     private double DrawnDistanceMeters => GetPathLength(DisplayedTrackPoints);
     private Vector3 DisplayPosition => ReplaySample is { } sample ? new Vector3(sample.X, sample.Y, sample.Z) : state.PositionMeters;
-    private bool turningWithoutTranslation;
     private double? DisplayBearing => HasConfirmedMovement
         ? GetDisplayedBearing()
         : positionAndHeadingWereReset && viewMode == TwinViewMode.Live ? 0 : null;
     // Heading changes alone do not prove walking; require cadence, speed and walking activity to avoid drawing while turning in place.
     private bool HasConfirmedMovement => ReplaySample is { } sample
         ? IsMoving(sample.SpeedMetersPerSecond, sample.StepCount, sample.Activity)
-        : !turningWithoutTranslation && IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
+        : IsMoving(state.SpeedMetersPerSecond, state.StepCount, state.Activity.Type);
     private string ElevationDisplay => ReplaySample is { } sample
         ? $"{sample.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m"
         : hasAltitudeReading ? $"{state.PositionMeters.Z.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture)} m" : "Unavailable";
@@ -298,7 +297,6 @@
         try
         {
             engine = new DeadReckoningEngine(new Vector3(initialX, initialY, 0), stepLength, initialHeading, graph.Edges.Count == 0 ? null : graph);
-            turningWithoutTranslation = false;
             positionAndHeadingWereReset = false;
             hasAltitudeReading = false;
             minimumElevation = maximumElevation = 0;
@@ -329,7 +327,6 @@
         track.Add(new Vector2(state.PositionMeters.X, state.PositionMeters.Y));
         currentSessionId = Guid.NewGuid();
         lastHistoryCapture = null;
-        turningWithoutTranslation = false;
         positionAndHeadingWereReset = true;
         viewMode = TwinViewMode.Live;
         message = "Position reset. The red direction indicator points up; distance starts from zero.";
@@ -355,8 +352,6 @@
             var reading = new SensorReading(timestamp, Number(sample, "samplingIntervalMilliseconds") ?? 0,
                 linearAcceleration, gravity, rotationRate, Vector(sample, "magneticField"),
                 Number(sample, "headingDegrees"), Number(sample, "pitchDegrees"), Number(sample, "rollDegrees"), Boolean(sample, "orientationIsAbsolute"), Number(sample, "pressureKilopascals"));
-            // Use the same spatial-motion decision as the step detector so the travel indicator stays hidden while turning in place.
-            turningWithoutTranslation = StepDetector.IsTurningWithoutTranslation(reading);
             state = engine.Process(reading);
             if (reading.PressureKilopascals is > 0)
             {
